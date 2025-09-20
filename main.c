@@ -1,0 +1,258 @@
+#define NOB_IMPLEMENTATION
+#include "nob.h"
+#include "raylib.h"
+#include "raymath.h"
+
+#define min(a, b) (a) < (b) ? (a) : (b)
+
+typedef struct
+{
+    uint16_t ms_to_trigger;
+    uint16_t ms_accumulated;
+} Accumulator;
+
+static bool accumulator_tick(Accumulator *accumulator, float dt)
+{
+    float add = dt * 1000.0;
+
+    if (accumulator->ms_accumulated + add > accumulator->ms_to_trigger)
+    {
+        accumulator->ms_accumulated = 0;
+        return true;
+    }
+
+    accumulator->ms_accumulated += add;
+    return false;
+}
+
+typedef struct
+{
+    Vector2 position;
+    Accumulator shooting;
+} Enemy;
+
+typedef struct
+{
+    Enemy *items;
+    size_t count;
+    size_t capacity;
+} Enemies;
+
+typedef struct
+{
+    Vector2 position;
+    Accumulator timing;
+} Bullet;
+
+typedef struct
+{
+    Bullet *items;
+    size_t count;
+    size_t capacity;
+} Bullets;
+
+typedef struct
+{
+    Vector2 position;
+} Player;
+
+static Bullets bullets = {0};
+
+void enemy_fire_bullet(const Enemy *enemy)
+{
+    Bullet bullet = {
+        .position = {.x = enemy->position.x, .y = enemy->position.y},
+        .timing =
+            {
+                .ms_accumulated = 0,
+                .ms_to_trigger = 200,
+            },
+    };
+
+    // make a pool
+    nob_da_append(&bullets, bullet);
+}
+
+static Player player = {
+    .position =
+        {
+            .x = 5,
+            .y = 4,
+        },
+};
+static Enemies enemies = {0};
+
+Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset, const Vector2 padding)
+{
+    Vector2 position = Vector2Scale(world_coordinates, scale);
+    position = Vector2Add(position, offset);
+    Vector2 scaled_padding = {
+        .x = padding.x * world_coordinates.x,
+        .y = padding.y * world_coordinates.y,
+    };
+    position = Vector2Add(position, scaled_padding);
+    return position;
+}
+
+int main(void)
+{
+    InitWindow(800, 600, "Ray Invaders Game in Raylib");
+
+    SetTargetFPS(60);
+
+    srand(time(NULL));
+
+    // 8*3
+    for (size_t i = 0; i < 8; ++i)
+    {
+        for (size_t j = 0; j < 3; ++j)
+        {
+            Enemy enemy = {.position = {.x = i, .y = j},
+                           .shooting = {
+                               .ms_accumulated = 0, .ms_to_trigger = GetRandomValue(1, 3),
+                               //    .ms_to_trigger = GetRandomValue(5000, 30000),
+                           }};
+            nob_da_append(&enemies, enemy);
+        }
+    }
+
+    bool reverse = false;
+
+    while (!WindowShouldClose())
+    {
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        float width = GetScreenWidth();
+        float offset_width = width * 0.1;
+        float width_for_game = width - offset_width;
+        float padding_x = width_for_game * 0.05;
+        float size_x = (width_for_game - (padding_x * 8)) / 8.0f;
+
+        float height = GetScreenHeight();
+        float offset_height = height * 0.1f;
+        float height_for_game = height - offset_height;
+        float padding_y = height_for_game * 0.05;
+        float size_y = (height_for_game - (padding_y * 4)) / 4.0f;
+
+        float scale = min(size_y, size_x);
+
+        Vector2 offset = {
+            .x = offset_width / 2,
+            .y = offset_height / 2,
+        };
+
+        Vector2 padding = {.x = padding_x, .y = padding_y};
+
+        {
+            Vector2 enemy_size = {
+                .x = scale,
+                .y = scale,
+            };
+
+            nob_da_foreach(Enemy, enemy, &enemies)
+            {
+                Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
+                DrawRectangleV(position, enemy_size, DARKGRAY);
+            }
+        }
+
+#define is_bullet_valid(bullet) bullet->position.y > 0
+
+        Vector2 bullet_size = {
+            .x = scale * 0.1,
+            .y = scale * 0.1,
+        };
+
+        {
+            nob_da_foreach(Bullet, bullet, &bullets)
+            {
+                if (is_bullet_valid(bullet))
+                {
+                    Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
+                    DrawRectangleV(position, bullet_size, RED);
+                }
+            }
+        }
+
+        Vector2 player_size = {
+            .x = scale,
+            .y = scale,
+        };
+
+        {
+            Vector2 position = world_to_screen(player.position, scale, offset, padding);
+            DrawRectangleV(position, player_size, BLUE);
+        }
+
+        nob_da_foreach(Enemy, enemy, &enemies)
+        {
+            Vector2 new_position = (Vector2){
+                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+                .y = enemy->position.y,
+            };
+
+            if (new_position.x < 0 || new_position.x > 8)
+            {
+                reverse = !reverse;
+            }
+        }
+
+        nob_da_foreach(Enemy, enemy, &enemies)
+        {
+            enemy->position = (Vector2){
+                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+                .y = enemy->position.y,
+            };
+        }
+
+        nob_da_foreach(Enemy, enemy, &enemies)
+        {
+            if (accumulator_tick(&enemy->shooting, GetFrameTime()))
+            {
+                enemy_fire_bullet(enemy);
+            }
+        }
+
+        {
+            const Vector2 gravity = {
+                .x = 0,
+                .y = 1,
+            };
+
+            nob_da_foreach(Bullet, bullet, &bullets)
+            {
+                if (is_bullet_valid(bullet) && accumulator_tick(&bullet->timing, GetFrameTime()))
+                {
+                    bullet->position = Vector2Add(bullet->position, gravity);
+                }
+            }
+        }
+
+        {
+            Rectangle player_box = {
+                .height = 1,
+                .width = 1,
+                .x = player.position.x,
+                .y = player.position.y,
+            };
+
+            nob_da_foreach(Bullet, bullet, &bullets)
+            {
+                Rectangle bullet_collision_box = {
+                    .width = 0.1,
+                    .height = 0.1,
+                    .x = bullet->position.x,
+                    .y = bullet->position.y,
+                };
+
+                if (is_bullet_valid(bullet) && CheckCollisionRecs(player_box, bullet_collision_box))
+                {
+                    printf("YOU ARE DEAD!\n");
+                }
+            }
+        }
+
+        EndDrawing();
+    }
+}
