@@ -77,7 +77,7 @@ static Player player = {
     .position =
         {
             .x = 5,
-            .y = 4,
+            .y = 6,
         },
 };
 static Enemies enemies = {0};
@@ -107,11 +107,14 @@ int main(void)
     {
         for (size_t j = 0; j < 3; ++j)
         {
-            Enemy enemy = {.position = {.x = i, .y = j},
-                           .shooting = {
-                               .ms_accumulated = 0, .ms_to_trigger = GetRandomValue(1, 3),
-                               //    .ms_to_trigger = GetRandomValue(5000, 30000),
-                           }};
+            Enemy enemy = {
+                .position = {.x = i, .y = j},
+                .shooting =
+                    {
+                        .ms_accumulated = 0,
+                        .ms_to_trigger = GetRandomValue(5000, 30000),
+                    },
+            };
             nob_da_append(&enemies, enemy);
         }
     }
@@ -133,7 +136,7 @@ int main(void)
         float offset_height = height * 0.1f;
         float height_for_game = height - offset_height;
         float padding_y = height_for_game * 0.05;
-        float size_y = (height_for_game - (padding_y * 4)) / 4.0f;
+        float size_y = (height_for_game - (padding_y * 4)) / 8.0f;
 
         float scale = min(size_y, size_x);
 
@@ -184,6 +187,27 @@ int main(void)
             Vector2 position = world_to_screen(player.position, scale, offset, padding);
             DrawRectangleV(position, player_size, BLUE);
         }
+
+        Vector2 next_direction = {0};
+
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D))
+        {
+            next_direction.x += GetFrameTime();
+        }
+        else if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
+        {
+            next_direction.x -= GetFrameTime();
+        }
+        else if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W))
+        {
+            next_direction.y -= GetFrameTime();
+        }
+        else if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S))
+        {
+            next_direction.y += GetFrameTime();
+        }
+
+        player.position = Vector2Add(next_direction, player.position);
 
         nob_da_foreach(Enemy, enemy, &enemies)
         {
