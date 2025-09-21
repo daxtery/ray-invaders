@@ -56,6 +56,12 @@ typedef struct
     Vector2 position;
 } Player;
 
+#define ENEMY_ROWS 3
+#define COLUMNS 8
+
+#define EMPTY_ROWS 4
+#define GAME_ROWS (ENEMY_ROWS + EMPTY_ROWS + 1)
+
 static Bullets bullets = {0};
 
 void enemy_fire_bullet(const Enemy *enemy)
@@ -76,10 +82,11 @@ void enemy_fire_bullet(const Enemy *enemy)
 static Player player = {
     .position =
         {
-            .x = 5,
-            .y = 6,
+            .x = COLUMNS / 2,
+            .y = GAME_ROWS - 1,
         },
 };
+
 static Enemies enemies = {0};
 
 Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset, const Vector2 padding)
@@ -103,16 +110,17 @@ int main(void)
     srand(time(NULL));
 
     // 8*3
-    for (size_t i = 0; i < 8; ++i)
+    for (size_t i = 0; i < COLUMNS; ++i)
     {
-        for (size_t j = 0; j < 3; ++j)
+        for (size_t j = 0; j < ENEMY_ROWS; ++j)
         {
             Enemy enemy = {
                 .position = {.x = i, .y = j},
                 .shooting =
                     {
                         .ms_accumulated = 0,
-                        .ms_to_trigger = GetRandomValue(5000, 30000),
+                        // .ms_to_trigger = GetRandomValue(5000, 30000),
+                        .ms_to_trigger = 1000,
                     },
             };
             nob_da_append(&enemies, enemy);
@@ -130,22 +138,42 @@ int main(void)
         float offset_width = width * 0.1;
         float width_for_game = width - offset_width;
         float padding_x = width_for_game * 0.05;
-        float size_x = (width_for_game - (padding_x * 8)) / 8.0f;
+        float size_x = (width_for_game - (padding_x * COLUMNS)) / (float)(COLUMNS + 1);
 
         float height = GetScreenHeight();
         float offset_height = height * 0.1f;
         float height_for_game = height - offset_height;
         float padding_y = height_for_game * 0.05;
-        float size_y = (height_for_game - (padding_y * 4)) / 8.0f;
+        float size_y = (height_for_game - (padding_y * GAME_ROWS)) / (float)GAME_ROWS;
 
         float scale = min(size_y, size_x);
 
         Vector2 offset = {
-            .x = offset_width / 2,
-            .y = offset_height / 2,
+            .x = (width - (size_x * (COLUMNS)) - (padding_x * COLUMNS)),
+            .y = offset_height,
         };
 
         Vector2 padding = {.x = padding_x, .y = padding_y};
+
+        // DEBUG
+        {
+            for (size_t i = 0; i < 12; ++i)
+            {
+                for (size_t j = 0; j < 12; ++j)
+                {
+                    Vector2 xy = {.x = i, .y = j};
+                    Vector2 position = world_to_screen(xy, scale, offset, padding);
+                    const char *text = nob_temp_sprintf("%lu:%lu(%d:%d)", i, j, (int)position.x, (int)position.y);
+                    const size_t font_size = 10;
+                    Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
+                    DrawText(text,
+                             position.x - text_size.x / 2, //
+                             position.y - text_size.y / 2, //
+                             font_size,                    //
+                             BLACK);
+                }
+            }
+        }
 
         {
             Vector2 enemy_size = {
@@ -160,8 +188,6 @@ int main(void)
             }
         }
 
-#define is_bullet_valid(bullet) bullet->position.y > 0
-
         Vector2 bullet_size = {
             .x = scale * 0.1,
             .y = scale * 0.1,
@@ -170,11 +196,8 @@ int main(void)
         {
             nob_da_foreach(Bullet, bullet, &bullets)
             {
-                if (is_bullet_valid(bullet))
-                {
-                    Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
-                    DrawRectangleV(position, bullet_size, RED);
-                }
+                Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
+                DrawRectangleV(position, bullet_size, RED);
             }
         }
 
@@ -209,6 +232,17 @@ int main(void)
 
         player.position = Vector2Add(next_direction, player.position);
 
+        {
+            for (int i = bullets.count - 1; i >= 0; --i)
+            {
+                Bullet *bullet = &bullets.items[i];
+                if (bullet->position.y > GAME_ROWS)
+                {
+                    nob_da_remove_unordered(&bullets, i);
+                }
+            }
+        }
+
         nob_da_foreach(Enemy, enemy, &enemies)
         {
             Vector2 new_position = (Vector2){
@@ -216,7 +250,7 @@ int main(void)
                 .y = enemy->position.y,
             };
 
-            if (new_position.x < 0 || new_position.x > 8)
+            if (new_position.x < 0 || new_position.x > COLUMNS)
             {
                 reverse = !reverse;
             }
@@ -246,7 +280,7 @@ int main(void)
 
             nob_da_foreach(Bullet, bullet, &bullets)
             {
-                if (is_bullet_valid(bullet) && accumulator_tick(&bullet->timing, GetFrameTime()))
+                if (accumulator_tick(&bullet->timing, GetFrameTime()))
                 {
                     bullet->position = Vector2Add(bullet->position, gravity);
                 }
@@ -270,12 +304,14 @@ int main(void)
                     .y = bullet->position.y,
                 };
 
-                if (is_bullet_valid(bullet) && CheckCollisionRecs(player_box, bullet_collision_box))
+                if (CheckCollisionRecs(player_box, bullet_collision_box))
                 {
                     printf("YOU ARE DEAD!\n");
                 }
             }
         }
+
+        nob_temp_reset();
 
         EndDrawing();
     }
