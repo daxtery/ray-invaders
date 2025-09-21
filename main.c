@@ -54,6 +54,19 @@ typedef struct
 typedef struct
 {
     Vector2 position;
+    bool destroyed;
+} Destroyable;
+
+typedef struct
+{
+    Destroyable *items;
+    size_t count;
+    size_t capacity;
+} Destroyables;
+
+typedef struct
+{
+    Vector2 position;
 } Player;
 
 #define ENEMY_ROWS 3
@@ -89,6 +102,8 @@ static Player player = {
 
 static Enemies enemies = {0};
 
+static Destroyables destroyables = {0};
+
 Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset, const Vector2 padding)
 {
     Vector2 position = Vector2Scale(world_coordinates, scale);
@@ -120,10 +135,34 @@ int main(void)
                     {
                         .ms_accumulated = 0,
                         // .ms_to_trigger = GetRandomValue(5000, 30000),
-                        .ms_to_trigger = 1000,
+                        .ms_to_trigger = 5000,
                     },
             };
             nob_da_append(&enemies, enemy);
+        }
+    }
+
+    for (size_t i = 0; i < 12; ++i)
+    {
+        int y = ENEMY_ROWS + GetRandomValue(1, EMPTY_ROWS - 1);
+        int x = GetRandomValue(0, COLUMNS);
+
+        int x_pieces = GetRandomValue(0, 10);
+        int y_pieces = GetRandomValue(0, 10);
+
+        for (int offset_x = -(x_pieces / 2); offset_x <= (x_pieces / 2); ++offset_x)
+        {
+            for (int offset_y = -(y_pieces / 2); offset_y <= (y_pieces / 2); ++offset_y)
+            {
+                nob_da_append(&destroyables, ((Destroyable){
+                                                 .destroyed = false,
+                                                 .position =
+                                                     {
+                                                         .x = x + offset_x * 0.1,
+                                                         .y = y + offset_y * 0.1,
+                                                     },
+                                             }));
+            }
         }
     }
 
@@ -201,6 +240,24 @@ int main(void)
             }
         }
 
+        Vector2 destroyable_size = {
+            .x = scale * 0.1,
+            .y = scale * 0.1,
+        };
+
+        {
+            nob_da_foreach(Destroyable, destroyable, &destroyables)
+            {
+                if (destroyable->destroyed)
+                {
+                    continue;
+                }
+
+                Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
+                DrawRectangleV(position, destroyable_size, GREEN);
+            }
+        }
+
         Vector2 player_size = {
             .x = scale,
             .y = scale,
@@ -275,7 +332,7 @@ int main(void)
         {
             const Vector2 gravity = {
                 .x = 0,
-                .y = 1,
+                .y = 10 * GetFrameTime(),
             };
 
             nob_da_foreach(Bullet, bullet, &bullets)
@@ -304,9 +361,32 @@ int main(void)
                     .y = bullet->position.y,
                 };
 
+                // stop bullet
                 if (CheckCollisionRecs(player_box, bullet_collision_box))
                 {
                     printf("YOU ARE DEAD!\n");
+                    continue;
+                }
+
+                nob_da_foreach(Destroyable, destroyable, &destroyables)
+                {
+                    if (destroyable->destroyed)
+                    {
+                        continue;
+                    }
+
+                    Rectangle destroyable_collision_box = {
+                        .width = 0.1,
+                        .height = 0.1,
+                        .x = destroyable->position.x,
+                        .y = destroyable->position.y,
+                    };
+
+                    // stop bullet
+                    if (CheckCollisionRecs(destroyable_collision_box, bullet_collision_box))
+                    {
+                        destroyable->destroyed = true;
+                    }
                 }
             }
         }
