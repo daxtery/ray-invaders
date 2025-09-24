@@ -352,8 +352,15 @@ int main(void)
                 .y = player.position.y,
             };
 
-            nob_da_foreach(Bullet, bullet, &bullets)
+            for (int i = bullets.count - 1; i >= 0; --i)
             {
+                Bullet *bullet = &bullets.items[i];
+
+                if (bullet->position.y > GAME_ROWS)
+                {
+                    nob_da_remove_unordered(&bullets, i);
+                }
+
                 Rectangle bullet_collision_box = {
                     .width = 0.1,
                     .height = 0.1,
@@ -361,10 +368,10 @@ int main(void)
                     .y = bullet->position.y,
                 };
 
-                // stop bullet
                 if (CheckCollisionRecs(player_box, bullet_collision_box))
                 {
-                    printf("YOU ARE DEAD!\n");
+                    // TODO: player death
+                    nob_da_remove_unordered(&bullets, i);
                     continue;
                 }
 
@@ -382,10 +389,11 @@ int main(void)
                         .y = destroyable->position.y,
                     };
 
-                    // stop bullet
                     if (CheckCollisionRecs(destroyable_collision_box, bullet_collision_box))
                     {
                         destroyable->destroyed = true;
+                        nob_da_remove_unordered(&bullets, i);
+                        break;
                     }
                 }
             }
