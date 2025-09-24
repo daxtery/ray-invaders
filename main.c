@@ -116,6 +116,26 @@ Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vect
     return position;
 }
 
+const static Vector2 BULLET_SIZE = {
+    .x = .1,
+    .y = .1,
+};
+
+const static Vector2 DESTROYABLE_SIZE = {
+    .x = .1,
+    .y = .1,
+};
+
+const static Vector2 PLAYER_SIZE = {
+    .x = 1,
+    .y = 1,
+};
+
+const static Vector2 ENEMY_SIZE = {
+    .x = 1,
+    .y = 1,
+};
+
 int main(void)
 {
     InitWindow(800, 600, "Ray Invaders Game in Raylib");
@@ -124,7 +144,6 @@ int main(void)
 
     srand(time(NULL));
 
-    // 8*3
     for (size_t i = 0; i < COLUMNS; ++i)
     {
         for (size_t j = 0; j < ENEMY_ROWS; ++j)
@@ -192,7 +211,10 @@ int main(void)
             .y = offset_height,
         };
 
-        Vector2 padding = {.x = padding_x, .y = padding_y};
+        Vector2 padding = {
+            .x = padding_x,
+            .y = padding_y,
+        };
 
         // DEBUG
         {
@@ -215,35 +237,22 @@ int main(void)
         }
 
         {
-            Vector2 enemy_size = {
-                .x = scale,
-                .y = scale,
-            };
-
             nob_da_foreach(Enemy, enemy, &enemies)
             {
                 Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
-                DrawRectangleV(position, enemy_size, DARKGRAY);
+                Vector2 size = Vector2Scale(ENEMY_SIZE, scale);
+                DrawRectangleV(position, size, DARKGRAY);
             }
         }
-
-        Vector2 bullet_size = {
-            .x = scale * 0.1,
-            .y = scale * 0.1,
-        };
 
         {
             nob_da_foreach(Bullet, bullet, &bullets)
             {
                 Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
-                DrawRectangleV(position, bullet_size, RED);
+                Vector2 size = Vector2Scale(BULLET_SIZE, scale);
+                DrawRectangleV(position, size, RED);
             }
         }
-
-        Vector2 destroyable_size = {
-            .x = scale * 0.1,
-            .y = scale * 0.1,
-        };
 
         {
             nob_da_foreach(Destroyable, destroyable, &destroyables)
@@ -254,18 +263,15 @@ int main(void)
                 }
 
                 Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
-                DrawRectangleV(position, destroyable_size, GREEN);
+                Vector2 size = Vector2Scale(DESTROYABLE_SIZE, scale);
+                DrawRectangleV(position, size, GREEN);
             }
         }
 
-        Vector2 player_size = {
-            .x = scale,
-            .y = scale,
-        };
-
         {
             Vector2 position = world_to_screen(player.position, scale, offset, padding);
-            DrawRectangleV(position, player_size, BLUE);
+            Vector2 size = Vector2Scale(PLAYER_SIZE, scale);
+            DrawRectangleV(position, size, BLUE);
         }
 
         Vector2 next_direction = {0};
@@ -346,8 +352,8 @@ int main(void)
 
         {
             Rectangle player_box = {
-                .height = 1,
-                .width = 1,
+                .height = PLAYER_SIZE.x,
+                .width = PLAYER_SIZE.y,
                 .x = player.position.x,
                 .y = player.position.y,
             };
@@ -362,8 +368,8 @@ int main(void)
                 }
 
                 Rectangle bullet_collision_box = {
-                    .width = 0.1,
-                    .height = 0.1,
+                    .width = BULLET_SIZE.x,
+                    .height = BULLET_SIZE.y,
                     .x = bullet->position.x,
                     .y = bullet->position.y,
                 };
@@ -383,8 +389,8 @@ int main(void)
                     }
 
                     Rectangle destroyable_collision_box = {
-                        .width = 0.1,
-                        .height = 0.1,
+                        .width = DESTROYABLE_SIZE.x,
+                        .height = DESTROYABLE_SIZE.y,
                         .x = destroyable->position.x,
                         .y = destroyable->position.y,
                     };
@@ -399,8 +405,8 @@ int main(void)
             }
         }
 
-        nob_temp_reset();
-
         EndDrawing();
+
+        nob_temp_reset();
     }
 }
