@@ -11,16 +11,21 @@ typedef struct
     uint16_t ms_accumulated;
 } Accumulator;
 
-static bool accumulator_tick(Accumulator *accumulator, float dt)
-{
-    float add = dt * 1000.0;
+#define RESTART true
+#define KEEP false
 
-    if (accumulator->ms_accumulated + add > accumulator->ms_to_trigger)
+static bool accumulator_tick(Accumulator *accumulator, float dt, bool restart)
+{
+    if (accumulator->ms_accumulated > accumulator->ms_to_trigger)
     {
-        accumulator->ms_accumulated = 0;
+        if (restart)
+        {
+            accumulator->ms_accumulated = 0;
+        }
         return true;
     }
 
+    float add = dt * 1000.0;
     accumulator->ms_accumulated += add;
     return false;
 }
@@ -67,6 +72,8 @@ typedef struct
 typedef struct
 {
     Vector2 position;
+    Accumulator shooting;
+    Bullet bullet;
 } Player;
 
 #define ENEMY_ROWS 3
@@ -98,11 +105,37 @@ static Player player = {
             .x = COLUMNS / 2,
             .y = GAME_ROWS - 1,
         },
+    .shooting =
+        {
+            .ms_accumulated = 0,
+            .ms_to_trigger = 200,
+        },
+    .bullet = {0},
 };
 
 static Enemies enemies = {0};
 
 static Destroyables destroyables = {0};
+
+static const Vector2 BULLET_SIZE = {
+    .x = .1,
+    .y = .1,
+};
+
+static const Vector2 DESTROYABLE_SIZE = {
+    .x = .1,
+    .y = .1,
+};
+
+static const Vector2 PLAYER_SIZE = {
+    .x = 1,
+    .y = 1,
+};
+
+static const Vector2 ENEMY_SIZE = {
+    .x = 1,
+    .y = 1,
+};
 
 Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset, const Vector2 padding)
 {
@@ -116,25 +149,63 @@ Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vect
     return position;
 }
 
-const static Vector2 BULLET_SIZE = {
-    .x = .1,
-    .y = .1,
-};
+static void move_player_bullet(void)
+{
+    Bullet *bullet = &player.bullet;
 
-const static Vector2 DESTROYABLE_SIZE = {
-    .x = .1,
-    .y = .1,
-};
+    if (bullet->position.y <= 0)
+    {
+        bullet->position = Vector2Zero();
+        return;
+    }
 
-const static Vector2 PLAYER_SIZE = {
-    .x = 1,
-    .y = 1,
-};
+    Rectangle bullet_collision_box = {
+        .width = BULLET_SIZE.x,
+        .height = BULLET_SIZE.y,
+        .x = bullet->position.x,
+        .y = bullet->position.y,
+    };
 
-const static Vector2 ENEMY_SIZE = {
-    .x = 1,
-    .y = 1,
-};
+    nob_da_foreach(Enemy, enemy, &enemies)
+    {
+        Rectangle enemy_collision_box = {
+            .width = DESTROYABLE_SIZE.x,
+            .height = DESTROYABLE_SIZE.y,
+            .x = enemy->position.x,
+            .y = enemy->position.y,
+        };
+
+        if (CheckCollisionRecs(enemy_collision_box, bullet_collision_box))
+        {
+            printf("Enemy @ (%.0f, %.0f) would be destroyed!\n", enemy->position.x, enemy->position.y);
+            // TODO: destroy enemy
+            bullet->position = Vector2Zero();
+            return;
+        }
+    }
+
+    nob_da_foreach(Destroyable, destroyable, &destroyables)
+    {
+        if (destroyable->destroyed)
+        {
+            continue;
+        }
+
+        Rectangle destroyable_collision_box = {
+            .width = DESTROYABLE_SIZE.x,
+            .height = DESTROYABLE_SIZE.y,
+            .x = destroyable->position.x,
+            .y = destroyable->position.y,
+        };
+
+        if (CheckCollisionRecs(destroyable_collision_box, bullet_collision_box))
+        {
+            destroyable->destroyed = true;
+            bullet->position = Vector2Zero();
+            return;
+        }
+    }
+}
 
 int main(void)
 {
@@ -154,7 +225,7 @@ int main(void)
                     {
                         .ms_accumulated = 0,
                         // .ms_to_trigger = GetRandomValue(5000, 30000),
-                        .ms_to_trigger = 5000,
+                        .ms_to_trigger = 10500,
                     },
             };
             nob_da_append(&enemies, enemy);
@@ -274,6 +345,17 @@ int main(void)
             DrawRectangleV(position, size, BLUE);
         }
 
+#define BULLET_IN_TRAVEL(bullet) (bullet.position.x != 0 && bullet.position.y != 0)
+
+        if (BULLET_IN_TRAVEL(player.bullet))
+        {
+            Vector2 position = world_to_screen(player.bullet.position, scale, offset, padding);
+            Vector2 size = Vector2Scale(BULLET_SIZE, scale);
+            DrawRectangleV(position, size, BLUE);
+        }
+
+        EndDrawing();
+
         Vector2 next_direction = {0};
 
         if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D))
@@ -295,15 +377,18 @@ int main(void)
 
         player.position = Vector2Add(next_direction, player.position);
 
+        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player.shooting, GetFrameTime(), KEEP) &&
+            !BULLET_IN_TRAVEL(player.bullet))
         {
-            for (int i = bullets.count - 1; i >= 0; --i)
-            {
-                Bullet *bullet = &bullets.items[i];
-                if (bullet->position.y > GAME_ROWS)
-                {
-                    nob_da_remove_unordered(&bullets, i);
-                }
-            }
+            player.shooting.ms_accumulated = 0;
+            player.bullet.position = (Vector2){
+                .x = player.position.x,
+                .y = player.position.y,
+            };
+            player.bullet.timing = (Accumulator){
+                .ms_accumulated = 0,
+                .ms_to_trigger = 200,
+            };
         }
 
         nob_da_foreach(Enemy, enemy, &enemies)
@@ -329,7 +414,7 @@ int main(void)
 
         nob_da_foreach(Enemy, enemy, &enemies)
         {
-            if (accumulator_tick(&enemy->shooting, GetFrameTime()))
+            if (accumulator_tick(&enemy->shooting, GetFrameTime(), RESTART))
             {
                 enemy_fire_bullet(enemy);
             }
@@ -343,10 +428,15 @@ int main(void)
 
             nob_da_foreach(Bullet, bullet, &bullets)
             {
-                if (accumulator_tick(&bullet->timing, GetFrameTime()))
+                if (accumulator_tick(&bullet->timing, GetFrameTime(), RESTART))
                 {
                     bullet->position = Vector2Add(bullet->position, gravity);
                 }
+            }
+
+            if (BULLET_IN_TRAVEL(player.bullet))
+            {
+                player.bullet.position = Vector2Add(player.bullet.position, Vector2Scale(gravity, -1.0f));
             }
         }
 
@@ -405,7 +495,7 @@ int main(void)
             }
         }
 
-        EndDrawing();
+        move_player_bullet();
 
         nob_temp_reset();
     }
