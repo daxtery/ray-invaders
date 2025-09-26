@@ -110,7 +110,7 @@ static Player player = {
             .ms_accumulated = 0,
             .ms_to_trigger = 200,
         },
-    .bullet = {0},
+    .bullet = {{0}},
 };
 
 static Enemies enemies = {0};
