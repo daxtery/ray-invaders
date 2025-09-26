@@ -34,6 +34,7 @@ typedef struct
 {
     Vector2 position;
     Accumulator shooting;
+    bool destroyed;
 } Enemy;
 
 typedef struct
@@ -166,45 +167,30 @@ static void move_player_bullet(void)
         .y = bullet->position.y,
     };
 
-    nob_da_foreach(Enemy, enemy, &enemies)
-    {
-        Rectangle enemy_collision_box = {
-            .width = DESTROYABLE_SIZE.x,
-            .height = DESTROYABLE_SIZE.y,
-            .x = enemy->position.x,
-            .y = enemy->position.y,
-        };
-
-        if (CheckCollisionRecs(enemy_collision_box, bullet_collision_box))
-        {
-            printf("Enemy @ (%.0f, %.0f) would be destroyed!\n", enemy->position.x, enemy->position.y);
-            // TODO: destroy enemy
-            bullet->position = Vector2Zero();
-            return;
-        }
+#define check_collisions(Type, it, da, Size)                                                                           \
+    nob_da_foreach(Type, it, da)                                                                                       \
+    {                                                                                                                  \
+        if (it->destroyed)                                                                                             \
+        {                                                                                                              \
+            continue;                                                                                                  \
+        }                                                                                                              \
+        Rectangle _collision_box = {                                                                                   \
+            .width = Size.x,                                                                                           \
+            .height = Size.y,                                                                                          \
+            .x = it->position.x,                                                                                       \
+            .y = it->position.y,                                                                                       \
+        };                                                                                                             \
+                                                                                                                       \
+        if (CheckCollisionRecs(_collision_box, bullet_collision_box))                                                  \
+        {                                                                                                              \
+            it->destroyed = true;                                                                                      \
+            bullet->position = Vector2Zero();                                                                          \
+            return;                                                                                                    \
+        }                                                                                                              \
     }
 
-    nob_da_foreach(Destroyable, destroyable, &destroyables)
-    {
-        if (destroyable->destroyed)
-        {
-            continue;
-        }
-
-        Rectangle destroyable_collision_box = {
-            .width = DESTROYABLE_SIZE.x,
-            .height = DESTROYABLE_SIZE.y,
-            .x = destroyable->position.x,
-            .y = destroyable->position.y,
-        };
-
-        if (CheckCollisionRecs(destroyable_collision_box, bullet_collision_box))
-        {
-            destroyable->destroyed = true;
-            bullet->position = Vector2Zero();
-            return;
-        }
-    }
+    check_collisions(Enemy, enemy, &enemies, ENEMY_SIZE);
+    check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE);
 }
 
 int main(void)
@@ -227,6 +213,7 @@ int main(void)
                         // .ms_to_trigger = GetRandomValue(5000, 30000),
                         .ms_to_trigger = 10500,
                     },
+                .destroyed = false,
             };
             nob_da_append(&enemies, enemy);
         }
@@ -310,6 +297,11 @@ int main(void)
         {
             nob_da_foreach(Enemy, enemy, &enemies)
             {
+                if (enemy->destroyed)
+                {
+                    continue;
+                }
+
                 Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
                 Vector2 size = Vector2Scale(ENEMY_SIZE, scale);
                 DrawRectangleV(position, size, DARKGRAY);
@@ -401,19 +393,30 @@ int main(void)
             if (new_position.x < 0 || new_position.x > COLUMNS)
             {
                 reverse = !reverse;
+                break;
             }
         }
 
         nob_da_foreach(Enemy, enemy, &enemies)
         {
-            enemy->position = (Vector2){
-                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
-                .y = enemy->position.y,
-            };
+            if (enemy->destroyed)
+            {
+                continue;
+            }
+
+            // enemy->position = (Vector2){
+            //     .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+            //     .y = enemy->position.y,
+            // };
         }
 
         nob_da_foreach(Enemy, enemy, &enemies)
         {
+            if (enemy->destroyed)
+            {
+                continue;
+            }
+
             if (accumulator_tick(&enemy->shooting, GetFrameTime(), RESTART))
             {
                 enemy_fire_bullet(enemy);
