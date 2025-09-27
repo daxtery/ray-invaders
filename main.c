@@ -46,6 +46,7 @@ typedef struct
 
 typedef struct
 {
+    bool destroyed;
     Vector2 position;
     Accumulator timing;
 } Bullet;
@@ -75,6 +76,7 @@ typedef struct
     Vector2 position;
     Accumulator shooting;
     Bullet bullet;
+    bool destroyed;
 } Player;
 
 #define ENEMY_ROWS 3
@@ -111,8 +113,21 @@ static Player player = {
             .ms_accumulated = 0,
             .ms_to_trigger = 200,
         },
-    .bullet = {{0}},
+    .bullet =
+        {
+            .position = {0},
+            .timing = {0},
+            .destroyed = true,
+        },
+    .destroyed = false,
 };
+
+static struct
+{
+    Player *items;
+    size_t count;
+    size_t capacity;
+} player_ = {.items = &player, .count = 1, .capacity = 1};
 
 static Enemies enemies = {0};
 
@@ -150,47 +165,64 @@ Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vect
     return position;
 }
 
-static void move_player_bullet(void)
+typedef enum
 {
-    Bullet *bullet = &player.bullet;
+    NONE,
+    BULLET,
+    DESTROYABLE,
+    PLAYER = 3,
+    ENEMY = 3,
+} HitResult;
 
-    if (bullet->position.y <= 0)
-    {
-        bullet->position = Vector2Zero();
-        return;
-    }
-
-    Rectangle bullet_collision_box = {
-        .width = BULLET_SIZE.x,
-        .height = BULLET_SIZE.y,
-        .x = bullet->position.x,
-        .y = bullet->position.y,
-    };
-
-#define check_collisions(Type, it, da, Size)                                                                           \
+#define check_collisions(Type, it, da, Size, Checking, label)                                                          \
     nob_da_foreach(Type, it, da)                                                                                       \
     {                                                                                                                  \
+        Rectangle __bullet_collision_box = {                                                                           \
+            .width = BULLET_SIZE.x,                                                                                    \
+            .height = BULLET_SIZE.y,                                                                                   \
+            .x = bullet->position.x,                                                                                   \
+            .y = bullet->position.y,                                                                                   \
+        };                                                                                                             \
+                                                                                                                       \
         if (it->destroyed)                                                                                             \
         {                                                                                                              \
             continue;                                                                                                  \
         }                                                                                                              \
-        Rectangle _collision_box = {                                                                                   \
+                                                                                                                       \
+        Rectangle __collision_box = {                                                                                  \
             .width = Size.x,                                                                                           \
             .height = Size.y,                                                                                          \
             .x = it->position.x,                                                                                       \
             .y = it->position.y,                                                                                       \
         };                                                                                                             \
                                                                                                                        \
-        if (CheckCollisionRecs(_collision_box, bullet_collision_box))                                                  \
+        if (CheckCollisionRecs(__collision_box, __bullet_collision_box))                                               \
         {                                                                                                              \
             it->destroyed = true;                                                                                      \
-            bullet->position = Vector2Zero();                                                                          \
-            return;                                                                                                    \
+            bullet->destroyed = true;                                                                                  \
+            result = Checking;                                                                                         \
+            goto label;                                                                                                \
         }                                                                                                              \
     }
 
-    check_collisions(Enemy, enemy, &enemies, ENEMY_SIZE);
-    check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE);
+static void move_player_bullet(void)
+{
+    Bullet *bullet = &player.bullet;
+
+    if (bullet->position.y <= 0)
+    {
+        bullet->destroyed = true;
+        return;
+    }
+
+    HitResult result = NONE;
+
+    check_collisions(Enemy, enemy, &enemies, ENEMY_SIZE, ENEMY, move_player_bullet_after_collision);
+    check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE, DESTROYABLE,
+                     move_player_bullet_after_collision);
+
+move_player_bullet_after_collision:
+    (void)result;
 }
 
 int main(void)
@@ -211,7 +243,7 @@ int main(void)
                     {
                         .ms_accumulated = 0,
                         // .ms_to_trigger = GetRandomValue(5000, 30000),
-                        .ms_to_trigger = 10500,
+                        .ms_to_trigger = 1000,
                     },
                 .destroyed = false,
             };
@@ -243,7 +275,7 @@ int main(void)
         }
     }
 
-    bool reverse = false;
+    bool reverse = true;
 
     while (!WindowShouldClose())
     {
@@ -337,9 +369,7 @@ int main(void)
             DrawRectangleV(position, size, BLUE);
         }
 
-#define BULLET_IN_TRAVEL(bullet) (bullet.position.x != 0 && bullet.position.y != 0)
-
-        if (BULLET_IN_TRAVEL(player.bullet))
+        if (!player.bullet.destroyed)
         {
             Vector2 position = world_to_screen(player.bullet.position, scale, offset, padding);
             Vector2 size = Vector2Scale(BULLET_SIZE, scale);
@@ -369,8 +399,7 @@ int main(void)
 
         player.position = Vector2Add(next_direction, player.position);
 
-        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player.shooting, GetFrameTime(), KEEP) &&
-            !BULLET_IN_TRAVEL(player.bullet))
+        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player.shooting, GetFrameTime(), KEEP) && player.bullet.destroyed)
         {
             player.shooting.ms_accumulated = 0;
             player.bullet.position = (Vector2){
@@ -381,10 +410,18 @@ int main(void)
                 .ms_accumulated = 0,
                 .ms_to_trigger = 200,
             };
+            player.bullet.destroyed = false;
         }
+
+        bool reached_wall = false;
 
         nob_da_foreach(Enemy, enemy, &enemies)
         {
+            if (enemy->destroyed)
+            {
+                continue;
+            }
+
             Vector2 new_position = (Vector2){
                 .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
                 .y = enemy->position.y,
@@ -392,9 +429,14 @@ int main(void)
 
             if (new_position.x < 0 || new_position.x > COLUMNS)
             {
-                reverse = !reverse;
+                reached_wall = true;
                 break;
             }
+        }
+
+        if (reached_wall)
+        {
+            reverse = !reverse;
         }
 
         nob_da_foreach(Enemy, enemy, &enemies)
@@ -404,10 +446,10 @@ int main(void)
                 continue;
             }
 
-            // enemy->position = (Vector2){
-            //     .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
-            //     .y = enemy->position.y,
-            // };
+            enemy->position = (Vector2){
+                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+                .y = enemy->position.y + (reached_wall ? 0.05f : 0.0f),
+            };
         }
 
         nob_da_foreach(Enemy, enemy, &enemies)
@@ -437,63 +479,42 @@ int main(void)
                 }
             }
 
-            if (BULLET_IN_TRAVEL(player.bullet))
+            if (!player.bullet.destroyed)
             {
                 player.bullet.position = Vector2Add(player.bullet.position, Vector2Scale(gravity, -1.0f));
             }
         }
 
         {
-            Rectangle player_box = {
-                .height = PLAYER_SIZE.x,
-                .width = PLAYER_SIZE.y,
-                .x = player.position.x,
-                .y = player.position.y,
-            };
+            nob_da_foreach(Bullet, bullet, &bullets)
+            {
+                if (bullet->position.y > GAME_ROWS)
+                {
+                    bullet->destroyed = true;
+                    continue;
+                }
+
+                HitResult result = NONE;
+                check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE, DESTROYABLE,
+                                 main_loop_on_collision);
+                check_collisions(Player, player, &player_, PLAYER_SIZE, PLAYER, main_loop_on_collision);
+
+            main_loop_on_collision:
+                if (result == PLAYER)
+                {
+                    // TODO: player death
+                    printf("Player would die!\n");
+                }
+                continue;
+            }
 
             for (int i = bullets.count - 1; i >= 0; --i)
             {
                 Bullet *bullet = &bullets.items[i];
 
-                if (bullet->position.y > GAME_ROWS)
+                if (bullet->destroyed)
                 {
                     nob_da_remove_unordered(&bullets, i);
-                }
-
-                Rectangle bullet_collision_box = {
-                    .width = BULLET_SIZE.x,
-                    .height = BULLET_SIZE.y,
-                    .x = bullet->position.x,
-                    .y = bullet->position.y,
-                };
-
-                if (CheckCollisionRecs(player_box, bullet_collision_box))
-                {
-                    // TODO: player death
-                    nob_da_remove_unordered(&bullets, i);
-                    continue;
-                }
-
-                nob_da_foreach(Destroyable, destroyable, &destroyables)
-                {
-                    if (destroyable->destroyed)
-                    {
-                        continue;
-                    }
-
-                    Rectangle destroyable_collision_box = {
-                        .width = DESTROYABLE_SIZE.x,
-                        .height = DESTROYABLE_SIZE.y,
-                        .x = destroyable->position.x,
-                        .y = destroyable->position.y,
-                    };
-
-                    if (CheckCollisionRecs(destroyable_collision_box, bullet_collision_box))
-                    {
-                        destroyable->destroyed = true;
-                        nob_da_remove_unordered(&bullets, i);
-                        break;
-                    }
                 }
             }
         }
