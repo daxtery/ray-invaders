@@ -1,34 +1,10 @@
 #define NOB_IMPLEMENTATION
+#include "accumulator.h"
 #include "nob.h"
 #include "raylib.h"
 #include "raymath.h"
 
 #define min(a, b) (a) < (b) ? (a) : (b)
-
-typedef struct
-{
-    uint16_t ms_to_trigger;
-    uint16_t ms_accumulated;
-} Accumulator;
-
-#define RESTART true
-#define KEEP false
-
-static bool accumulator_tick(Accumulator *accumulator, float dt, bool restart)
-{
-    if (accumulator->ms_accumulated > accumulator->ms_to_trigger)
-    {
-        if (restart)
-        {
-            accumulator->ms_accumulated = 0;
-        }
-        return true;
-    }
-
-    float add = dt * 1000.0;
-    accumulator->ms_accumulated += add;
-    return false;
-}
 
 typedef struct
 {
@@ -79,59 +55,24 @@ typedef struct
     bool destroyed;
 } Player;
 
+typedef struct
+{
+    Bullets enemy_bullets;
+    Enemies enemies;
+    bool enemies_going_right;
+    //
+    Destroyables destroyables;
+    //
+    Player player;
+    //
+    uint16_t score;
+} State;
+
 #define ENEMY_ROWS 3
 #define COLUMNS 8
 
 #define EMPTY_ROWS 4
 #define GAME_ROWS (ENEMY_ROWS + EMPTY_ROWS + 1)
-
-static Bullets bullets = {0};
-
-void enemy_fire_bullet(const Enemy *enemy)
-{
-    Bullet bullet = {
-        .position = {.x = enemy->position.x, .y = enemy->position.y},
-        .timing =
-            {
-                .ms_accumulated = 0,
-                .ms_to_trigger = 200,
-            },
-    };
-
-    // make a pool
-    nob_da_append(&bullets, bullet);
-}
-
-static Player player = {
-    .position =
-        {
-            .x = COLUMNS / 2,
-            .y = GAME_ROWS - 1,
-        },
-    .shooting =
-        {
-            .ms_accumulated = 0,
-            .ms_to_trigger = 200,
-        },
-    .bullet =
-        {
-            .position = {0},
-            .timing = {0},
-            .destroyed = true,
-        },
-    .destroyed = false,
-};
-
-static struct
-{
-    Player *items;
-    size_t count;
-    size_t capacity;
-} player_ = {.items = &player, .count = 1, .capacity = 1};
-
-static Enemies enemies = {0};
-
-static Destroyables destroyables = {0};
 
 static const Vector2 BULLET_SIZE = {
     .x = .1,
@@ -153,7 +94,8 @@ static const Vector2 ENEMY_SIZE = {
     .y = 1,
 };
 
-Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset, const Vector2 padding)
+static Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset,
+                               const Vector2 padding)
 {
     Vector2 position = Vector2Scale(world_coordinates, scale);
     position = Vector2Add(position, offset);
@@ -205,9 +147,9 @@ typedef enum
         }                                                                                                              \
     }
 
-static void move_player_bullet(void)
+static void move_player_bullet(State *state)
 {
-    Bullet *bullet = &player.bullet;
+    Bullet *bullet = &state->player.bullet;
 
     if (bullet->position.y <= 0)
     {
@@ -217,21 +159,42 @@ static void move_player_bullet(void)
 
     HitResult result = NONE;
 
-    check_collisions(Enemy, enemy, &enemies, ENEMY_SIZE, ENEMY, move_player_bullet_after_collision);
-    check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE, DESTROYABLE,
+    check_collisions(Enemy, enemy, &state->enemies, ENEMY_SIZE, ENEMY, move_player_bullet_after_collision);
+    check_collisions(Destroyable, destroyable, &state->destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                      move_player_bullet_after_collision);
 
 move_player_bullet_after_collision:
     (void)result;
 }
 
-int main(void)
+void setup(State *state)
 {
-    InitWindow(800, 600, "Ray Invaders Game in Raylib");
+    state->enemy_bullets.count = 0;
+    state->enemies.count = 0;
+    state->enemies_going_right = true;
+    state->destroyables.count = 0;
 
-    SetTargetFPS(60);
+    state->player = (Player){
+        .position =
+            {
+                .x = COLUMNS / 2,
+                .y = GAME_ROWS - 1,
+            },
+        .shooting =
+            {
+                .ms_accumulated = 0,
+                .ms_to_trigger = 200,
+            },
+        .bullet =
+            {
+                .position = {0},
+                .timing = {0},
+                .destroyed = true,
+            },
+        .destroyed = false,
+    };
 
-    srand(time(NULL));
+    state->score = 0;
 
     for (size_t i = 0; i < COLUMNS; ++i)
     {
@@ -247,7 +210,7 @@ int main(void)
                     },
                 .destroyed = false,
             };
-            nob_da_append(&enemies, enemy);
+            nob_da_append(&state->enemies, enemy);
         }
     }
 
@@ -263,19 +226,29 @@ int main(void)
         {
             for (int offset_y = -(y_pieces / 2); offset_y <= (y_pieces / 2); ++offset_y)
             {
-                nob_da_append(&destroyables, ((Destroyable){
-                                                 .destroyed = false,
-                                                 .position =
-                                                     {
-                                                         .x = x + offset_x * 0.1,
-                                                         .y = y + offset_y * 0.1,
-                                                     },
-                                             }));
+                nob_da_append(&state->destroyables, ((Destroyable){
+                                                        .destroyed = false,
+                                                        .position =
+                                                            {
+                                                                .x = x + offset_x * 0.1,
+                                                                .y = y + offset_y * 0.1,
+                                                            },
+                                                    }));
             }
         }
     }
+}
 
-    bool reverse = true;
+int main(void)
+{
+    InitWindow(800, 600, "Ray Invaders Game in Raylib");
+
+    SetTargetFPS(60);
+
+    srand(time(NULL));
+
+    State state = {0};
+    setup(&state);
 
     while (!WindowShouldClose())
     {
@@ -327,7 +300,7 @@ int main(void)
         }
 
         {
-            nob_da_foreach(Enemy, enemy, &enemies)
+            nob_da_foreach(Enemy, enemy, &state.enemies)
             {
                 if (enemy->destroyed)
                 {
@@ -341,7 +314,7 @@ int main(void)
         }
 
         {
-            nob_da_foreach(Bullet, bullet, &bullets)
+            nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
             {
                 Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
                 Vector2 size = Vector2Scale(BULLET_SIZE, scale);
@@ -350,7 +323,7 @@ int main(void)
         }
 
         {
-            nob_da_foreach(Destroyable, destroyable, &destroyables)
+            nob_da_foreach(Destroyable, destroyable, &state.destroyables)
             {
                 if (destroyable->destroyed)
                 {
@@ -364,14 +337,14 @@ int main(void)
         }
 
         {
-            Vector2 position = world_to_screen(player.position, scale, offset, padding);
+            Vector2 position = world_to_screen(state.player.position, scale, offset, padding);
             Vector2 size = Vector2Scale(PLAYER_SIZE, scale);
             DrawRectangleV(position, size, BLUE);
         }
 
-        if (!player.bullet.destroyed)
+        if (!state.player.bullet.destroyed)
         {
-            Vector2 position = world_to_screen(player.bullet.position, scale, offset, padding);
+            Vector2 position = world_to_screen(state.player.bullet.position, scale, offset, padding);
             Vector2 size = Vector2Scale(BULLET_SIZE, scale);
             DrawRectangleV(position, size, BLUE);
         }
@@ -397,25 +370,27 @@ int main(void)
             next_direction.y += GetFrameTime();
         }
 
-        player.position = Vector2Add(next_direction, player.position);
+        state.player.position = Vector2Add(next_direction, state.player.position);
 
-        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player.shooting, GetFrameTime(), KEEP) && player.bullet.destroyed)
+        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&state.player.shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
+            state.player.bullet.destroyed)
         {
-            player.shooting.ms_accumulated = 0;
-            player.bullet.position = (Vector2){
-                .x = player.position.x,
-                .y = player.position.y,
+            state.player.shooting.ms_accumulated = 0;
+            state.player.bullet.position = (Vector2){
+                .x = state.player.position.x,
+                .y = state.player.position.y,
             };
-            player.bullet.timing = (Accumulator){
+            state.player.bullet.timing = (Accumulator){
                 .ms_accumulated = 0,
                 .ms_to_trigger = 200,
             };
-            player.bullet.destroyed = false;
+            state.player.bullet.destroyed = false;
         }
 
         bool reached_wall = false;
+        float enemy_speed = 0.1f * GetFrameTime();
 
-        nob_da_foreach(Enemy, enemy, &enemies)
+        nob_da_foreach(Enemy, enemy, &state.enemies)
         {
             if (enemy->destroyed)
             {
@@ -423,7 +398,7 @@ int main(void)
             }
 
             Vector2 new_position = (Vector2){
-                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+                .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
                 .y = enemy->position.y,
             };
 
@@ -436,10 +411,10 @@ int main(void)
 
         if (reached_wall)
         {
-            reverse = !reverse;
+            state.enemies_going_right = !state.enemies_going_right;
         }
 
-        nob_da_foreach(Enemy, enemy, &enemies)
+        nob_da_foreach(Enemy, enemy, &state.enemies)
         {
             if (enemy->destroyed)
             {
@@ -447,21 +422,29 @@ int main(void)
             }
 
             enemy->position = (Vector2){
-                .x = enemy->position.x + (reverse ? 0.01f : -0.01f),
+                .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
                 .y = enemy->position.y + (reached_wall ? 0.05f : 0.0f),
             };
         }
 
-        nob_da_foreach(Enemy, enemy, &enemies)
+        nob_da_foreach(Enemy, enemy, &state.enemies)
         {
             if (enemy->destroyed)
             {
                 continue;
             }
 
-            if (accumulator_tick(&enemy->shooting, GetFrameTime(), RESTART))
+            if (accumulator_tick(&enemy->shooting, GetFrameTime(), When_Tick_Ends_Restart))
             {
-                enemy_fire_bullet(enemy);
+                Bullet bullet = {
+                    .position = {.x = enemy->position.x, .y = enemy->position.y},
+                    .timing =
+                        {
+                            .ms_accumulated = 0,
+                            .ms_to_trigger = 200,
+                        },
+                };
+                nob_da_append(&state.enemy_bullets, bullet);
             }
         }
 
@@ -471,22 +454,22 @@ int main(void)
                 .y = 10 * GetFrameTime(),
             };
 
-            nob_da_foreach(Bullet, bullet, &bullets)
+            nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
             {
-                if (accumulator_tick(&bullet->timing, GetFrameTime(), RESTART))
+                if (accumulator_tick(&bullet->timing, GetFrameTime(), When_Tick_Ends_Restart))
                 {
                     bullet->position = Vector2Add(bullet->position, gravity);
                 }
             }
 
-            if (!player.bullet.destroyed)
+            if (!state.player.bullet.destroyed)
             {
-                player.bullet.position = Vector2Add(player.bullet.position, Vector2Scale(gravity, -1.0f));
+                state.player.bullet.position = Vector2Add(state.player.bullet.position, Vector2Scale(gravity, -1.0f));
             }
         }
 
         {
-            nob_da_foreach(Bullet, bullet, &bullets)
+            nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
             {
                 if (bullet->position.y > GAME_ROWS)
                 {
@@ -495,31 +478,38 @@ int main(void)
                 }
 
                 HitResult result = NONE;
-                check_collisions(Destroyable, destroyable, &destroyables, DESTROYABLE_SIZE, DESTROYABLE,
+                check_collisions(Destroyable, destroyable, &state.destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                                  main_loop_on_collision);
+                const struct
+                {
+                    Player *items;
+                    size_t count;
+                } player_ = {.items = &state.player, .count = 1};
+
                 check_collisions(Player, player, &player_, PLAYER_SIZE, PLAYER, main_loop_on_collision);
 
             main_loop_on_collision:
                 if (result == PLAYER)
                 {
                     // TODO: player death
-                    printf("Player would die!\n");
+                    printf("Player died!\n");
+                    setup(&state);
                 }
                 continue;
             }
 
-            for (int i = bullets.count - 1; i >= 0; --i)
+            for (int i = state.enemy_bullets.count - 1; i >= 0; --i)
             {
-                Bullet *bullet = &bullets.items[i];
+                Bullet *bullet = &state.enemy_bullets.items[i];
 
                 if (bullet->destroyed)
                 {
-                    nob_da_remove_unordered(&bullets, i);
+                    nob_da_remove_unordered(&state.enemy_bullets, i);
                 }
             }
         }
 
-        move_player_bullet();
+        move_player_bullet(&state);
 
         nob_temp_reset();
     }
