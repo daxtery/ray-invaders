@@ -164,7 +164,10 @@ static void move_player_bullet(State *state)
                      move_player_bullet_after_collision);
 
 move_player_bullet_after_collision:
-    (void)result;
+    if (result == ENEMY)
+    {
+        state->score += 10;
+    }
 }
 
 void setup(State *state)
@@ -300,6 +303,21 @@ int main(void)
         }
 
         {
+            const char *text = nob_temp_sprintf("Score: %d", state.score);
+            const size_t font_size = 10;
+            Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
+            Vector2 position = {
+                .x = GetScreenWidth() / 2,
+                .y = 10,
+            };
+            DrawText(text,
+                     position.x - text_size.x / 2, //
+                     position.y - text_size.y / 2, //
+                     font_size,                    //
+                     RED);
+        }
+
+        {
             nob_da_foreach(Enemy, enemy, &state.enemies)
             {
                 if (enemy->destroyed)
@@ -371,6 +389,7 @@ int main(void)
         }
 
         state.player.position = Vector2Add(next_direction, state.player.position);
+        // TODO: keep player inside box
 
         if (IsKeyDown(KEY_SPACE) && accumulator_tick(&state.player.shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
             state.player.bullet.destroyed)
@@ -491,7 +510,7 @@ int main(void)
             main_loop_on_collision:
                 if (result == PLAYER)
                 {
-                    // TODO: player death
+                    // TODO: player death state
                     printf("Player died!\n");
                     setup(&state);
                 }
