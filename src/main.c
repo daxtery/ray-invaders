@@ -72,6 +72,7 @@ typedef struct
 #define COLUMNS 8
 
 #define EMPTY_ROWS 4
+#define ENEMIES_GAME_OVER_ROW 5
 #define GAME_ROWS (ENEMY_ROWS + EMPTY_ROWS + 1)
 
 static const Vector2 BULLET_SIZE = {
@@ -170,7 +171,7 @@ move_player_bullet_after_collision:
     }
 }
 
-void setup(State *state)
+static void setup(State *state)
 {
     state->enemy_bullets.count = 0;
     state->enemies.count = 0;
@@ -239,6 +240,59 @@ void setup(State *state)
                                                     }));
             }
         }
+    }
+}
+
+static void MovePlayer(Vector2 *position)
+{
+    Vector2 next_direction = {0};
+
+    if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D))
+    {
+        next_direction.x += GetFrameTime();
+    }
+    else if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
+    {
+        next_direction.x -= GetFrameTime();
+    }
+    else if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W))
+    {
+        next_direction.y -= GetFrameTime();
+    }
+    else if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S))
+    {
+        next_direction.y += GetFrameTime();
+    }
+
+    Vector2 new_position = Vector2Add(next_direction, *position);
+
+    if (new_position.x <= 0)
+    {
+        new_position.x = 0;
+    }
+    else if (new_position.x >= COLUMNS)
+    {
+        new_position.x = COLUMNS;
+    }
+
+    *position = new_position;
+}
+
+static void HandlePlayerShooting(Player *player)
+{
+    if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player->shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
+        player->bullet.destroyed)
+    {
+        player->shooting.ms_accumulated = 0;
+        player->bullet.position = (Vector2){
+            .x = player->position.x,
+            .y = player->position.y,
+        };
+        player->bullet.timing = (Accumulator){
+            .ms_accumulated = 0,
+            .ms_to_trigger = 200,
+        };
+        player->bullet.destroyed = false;
     }
 }
 
@@ -369,42 +423,8 @@ int main(void)
 
         EndDrawing();
 
-        Vector2 next_direction = {0};
-
-        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D))
-        {
-            next_direction.x += GetFrameTime();
-        }
-        else if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
-        {
-            next_direction.x -= GetFrameTime();
-        }
-        else if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W))
-        {
-            next_direction.y -= GetFrameTime();
-        }
-        else if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S))
-        {
-            next_direction.y += GetFrameTime();
-        }
-
-        state.player.position = Vector2Add(next_direction, state.player.position);
-        // TODO: keep player inside box
-
-        if (IsKeyDown(KEY_SPACE) && accumulator_tick(&state.player.shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
-            state.player.bullet.destroyed)
-        {
-            state.player.shooting.ms_accumulated = 0;
-            state.player.bullet.position = (Vector2){
-                .x = state.player.position.x,
-                .y = state.player.position.y,
-            };
-            state.player.bullet.timing = (Accumulator){
-                .ms_accumulated = 0,
-                .ms_to_trigger = 200,
-            };
-            state.player.bullet.destroyed = false;
-        }
+        MovePlayer(&state.player.position);
+        HandlePlayerShooting(&state.player);
 
         bool reached_wall = false;
         float enemy_speed = 0.1f * GetFrameTime();
@@ -444,6 +464,21 @@ int main(void)
                 .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
                 .y = enemy->position.y + (reached_wall ? 0.05f : 0.0f),
             };
+        }
+
+        nob_da_foreach(Enemy, enemy, &state.enemies)
+        {
+            if (enemy->destroyed)
+            {
+                continue;
+            }
+
+            if (enemy->position.y >= ENEMIES_GAME_OVER_ROW)
+            {
+                // TODO: trigger end game too
+                setup(&state);
+                break;
+            }
         }
 
         nob_da_foreach(Enemy, enemy, &state.enemies)
@@ -513,6 +548,7 @@ int main(void)
                     // TODO: player death state
                     printf("Player died!\n");
                     setup(&state);
+                    break;
                 }
                 continue;
             }
