@@ -58,7 +58,9 @@ typedef struct
 typedef enum
 {
     LOST,
+    WAITING,
     PLAYING,
+    WON,
 } Status;
 typedef struct
 {
@@ -155,6 +157,19 @@ typedef enum
         }                                                                                                              \
     }
 
+static bool all_enemies_defeated(const State *state)
+{
+    nob_da_foreach(Enemy, enemy, &state->enemies)
+    {
+        if (enemy->destroyed)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static void move_player_bullet(State *state)
 {
     Bullet *bullet = &state->player.bullet;
@@ -175,6 +190,10 @@ move_player_bullet_after_collision:
     if (result == ENEMY)
     {
         state->score += 10;
+        if (all_enemies_defeated(state))
+        {
+            state->status = WON;
+        }
     }
 }
 
@@ -216,8 +235,7 @@ static void setup(State *state)
                 .shooting =
                     {
                         .ms_accumulated = 0,
-                        // .ms_to_trigger = GetRandomValue(5000, 30000),
-                        .ms_to_trigger = 1000,
+                        .ms_to_trigger = GetRandomValue(5000, 30000),
                     },
                 .destroyed = false,
             };
@@ -250,7 +268,7 @@ static void setup(State *state)
     }
 }
 
-static void MovePlayer(Vector2 *position)
+static bool MovePlayer(Vector2 *position)
 {
     Vector2 next_direction = {0};
 
@@ -283,6 +301,7 @@ static void MovePlayer(Vector2 *position)
     }
 
     *position = new_position;
+    return next_direction.x > 0 || next_direction.y > 0;
 }
 
 static void HandlePlayerShooting(Player *player)
@@ -315,7 +334,7 @@ int main(void)
     float lastWidth = 0;
 
     State state = {0};
-    state.status = LOST;
+    state.status = WAITING;
     setup(&state);
 
     RenderTexture2D target;
@@ -358,6 +377,7 @@ int main(void)
 
         switch (state.status)
         {
+        case WAITING:
         case PLAYING: {
             {
                 const char *text = nob_temp_sprintf("Score: %d", state.score);
@@ -423,151 +443,158 @@ int main(void)
                 DrawRectangleV(position, size, BLUE);
             }
 
-            MovePlayer(&state.player.position);
-            HandlePlayerShooting(&state.player);
+            bool moved = MovePlayer(&state.player.position);
+            if (moved && state.status == WAITING)
+            {
+                state.status = PLAYING;
+            }
 
             bool reached_wall = false;
             float enemy_speed = 0.1f * GetFrameTime();
 
-            nob_da_foreach(Enemy, enemy, &state.enemies)
+            if (state.status == PLAYING)
             {
-                if (enemy->destroyed)
+                HandlePlayerShooting(&state.player);
+
+                nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    continue;
-                }
-
-                Vector2 new_position = (Vector2){
-                    .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
-                    .y = enemy->position.y,
-                };
-
-                if (new_position.x < 0 || new_position.x > COLUMNS)
-                {
-                    reached_wall = true;
-                    break;
-                }
-            }
-
-            if (reached_wall)
-            {
-                state.enemies_going_right = !state.enemies_going_right;
-            }
-
-            nob_da_foreach(Enemy, enemy, &state.enemies)
-            {
-                if (enemy->destroyed)
-                {
-                    continue;
-                }
-
-                enemy->position = (Vector2){
-                    .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
-                    .y = enemy->position.y + (reached_wall ? 0.05f : 0.0f),
-                };
-            }
-
-            nob_da_foreach(Enemy, enemy, &state.enemies)
-            {
-                if (enemy->destroyed)
-                {
-                    continue;
-                }
-
-                if (enemy->position.y >= ENEMIES_GAME_OVER_ROW)
-                {
-                    state.status = LOST;
-                    break;
-                }
-            }
-
-            nob_da_foreach(Enemy, enemy, &state.enemies)
-            {
-                if (enemy->destroyed)
-                {
-                    continue;
-                }
-
-                if (accumulator_tick(&enemy->shooting, GetFrameTime(), When_Tick_Ends_Restart))
-                {
-                    Bullet bullet = {
-                        .position = {.x = enemy->position.x, .y = enemy->position.y},
-                        .timing =
-                            {
-                                .ms_accumulated = 0,
-                                .ms_to_trigger = 200,
-                            },
-                    };
-                    nob_da_append(&state.enemy_bullets, bullet);
-                }
-            }
-
-            {
-                const Vector2 gravity = {
-                    .x = 0,
-                    .y = 10 * GetFrameTime(),
-                };
-
-                nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
-                {
-                    if (accumulator_tick(&bullet->timing, GetFrameTime(), When_Tick_Ends_Restart))
+                    if (enemy->destroyed)
                     {
-                        bullet->position = Vector2Add(bullet->position, gravity);
-                    }
-                }
-
-                if (!state.player.bullet.destroyed)
-                {
-                    state.player.bullet.position =
-                        Vector2Add(state.player.bullet.position, Vector2Scale(gravity, -1.0f));
-                }
-            }
-
-            {
-                nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
-                {
-                    if (bullet->position.y > GAME_ROWS)
-                    {
-                        bullet->destroyed = true;
                         continue;
                     }
 
-                    HitResult result = NONE;
-                    check_collisions(Destroyable, destroyable, &state.destroyables, DESTROYABLE_SIZE, DESTROYABLE,
-                                     main_loop_on_collision);
-                    const struct
+                    Vector2 new_position = (Vector2){
+                        .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
+                        .y = enemy->position.y,
+                    };
+
+                    if (new_position.x < 0 || new_position.x > COLUMNS)
                     {
-                        Player *items;
-                        size_t count;
-                    } player_ = {.items = &state.player, .count = 1};
+                        reached_wall = true;
+                        break;
+                    }
+                }
 
-                    check_collisions(Player, player, &player_, PLAYER_SIZE, PLAYER, main_loop_on_collision);
+                if (reached_wall)
+                {
+                    state.enemies_going_right = !state.enemies_going_right;
+                }
 
-                main_loop_on_collision:
-                    if (result == PLAYER)
+                nob_da_foreach(Enemy, enemy, &state.enemies)
+                {
+                    if (enemy->destroyed)
+                    {
+                        continue;
+                    }
+
+                    enemy->position = (Vector2){
+                        .x = enemy->position.x + (state.enemies_going_right ? enemy_speed : -enemy_speed),
+                        .y = enemy->position.y + (reached_wall ? 0.05f : 0.0f),
+                    };
+                }
+
+                nob_da_foreach(Enemy, enemy, &state.enemies)
+                {
+                    if (enemy->destroyed)
+                    {
+                        continue;
+                    }
+
+                    if (enemy->position.y >= ENEMIES_GAME_OVER_ROW)
                     {
                         state.status = LOST;
                         break;
                     }
-                    continue;
                 }
 
-                for (int i = state.enemy_bullets.count - 1; i >= 0; --i)
+                nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    Bullet *bullet = &state.enemy_bullets.items[i];
-
-                    if (bullet->destroyed)
+                    if (enemy->destroyed)
                     {
-                        nob_da_remove_unordered(&state.enemy_bullets, i);
+                        continue;
+                    }
+
+                    if (accumulator_tick(&enemy->shooting, GetFrameTime(), When_Tick_Ends_Restart))
+                    {
+                        Bullet bullet = {
+                            .position = {.x = enemy->position.x, .y = enemy->position.y},
+                            .timing =
+                                {
+                                    .ms_accumulated = 0,
+                                    .ms_to_trigger = 200,
+                                },
+                        };
+                        nob_da_append(&state.enemy_bullets, bullet);
                     }
                 }
-            }
 
-            move_player_bullet(&state);
+                {
+                    const Vector2 gravity = {
+                        .x = 0,
+                        .y = 10 * GetFrameTime(),
+                    };
+
+                    nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
+                    {
+                        if (accumulator_tick(&bullet->timing, GetFrameTime(), When_Tick_Ends_Restart))
+                        {
+                            bullet->position = Vector2Add(bullet->position, gravity);
+                        }
+                    }
+
+                    if (!state.player.bullet.destroyed)
+                    {
+                        state.player.bullet.position =
+                            Vector2Add(state.player.bullet.position, Vector2Scale(gravity, -1.0f));
+                    }
+                }
+
+                {
+                    nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
+                    {
+                        if (bullet->position.y > GAME_ROWS)
+                        {
+                            bullet->destroyed = true;
+                            continue;
+                        }
+
+                        HitResult result = NONE;
+                        check_collisions(Destroyable, destroyable, &state.destroyables, DESTROYABLE_SIZE, DESTROYABLE,
+                                         main_loop_on_collision);
+                        const struct
+                        {
+                            Player *items;
+                            size_t count;
+                        } player_ = {.items = &state.player, .count = 1};
+
+                        check_collisions(Player, player, &player_, PLAYER_SIZE, PLAYER, main_loop_on_collision);
+
+                    main_loop_on_collision:
+                        if (result == PLAYER)
+                        {
+                            state.status = LOST;
+                            break;
+                        }
+                        continue;
+                    }
+
+                    for (int i = state.enemy_bullets.count - 1; i >= 0; --i)
+                    {
+                        Bullet *bullet = &state.enemy_bullets.items[i];
+
+                        if (bullet->destroyed)
+                        {
+                            nob_da_remove_unordered(&state.enemy_bullets, i);
+                        }
+                    }
+                }
+                move_player_bullet(&state);
+            }
             break;
         }
+        case WON:
         case LOST: {
             BeginTextureMode(target);
-
             {
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
@@ -630,7 +657,10 @@ int main(void)
                 setup(&state);
             }
 
-            const char *text = nob_temp_sprintf("Lost. Score: %d\nPress any key to restart", state.score);
+            const char *text = state.status == LOST
+                                   ? nob_temp_sprintf("Lost. Score: %d\nPress any key to restart", state.score)
+                                   : nob_temp_sprintf("Won. Score: %d\nPress any key to restart", state.score);
+
             const size_t font_size = 50;
             Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
             Vector2 position = {
