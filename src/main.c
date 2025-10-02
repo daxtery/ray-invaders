@@ -280,14 +280,6 @@ static bool MovePlayer(Vector2 *position)
     {
         next_direction.x -= GetFrameTime();
     }
-    else if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W))
-    {
-        next_direction.y -= GetFrameTime();
-    }
-    else if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S))
-    {
-        next_direction.y += GetFrameTime();
-    }
 
     Vector2 new_position = Vector2Add(next_direction, *position);
 
@@ -301,7 +293,7 @@ static bool MovePlayer(Vector2 *position)
     }
 
     *position = new_position;
-    return next_direction.x > 0 || next_direction.y > 0;
+    return next_direction.x != 0.0;
 }
 
 static void HandlePlayerShooting(Player *player)
@@ -311,7 +303,7 @@ static void HandlePlayerShooting(Player *player)
     {
         player->shooting.ms_accumulated = 0;
         player->bullet.position = (Vector2){
-            .x = player->position.x,
+            .x = player->position.x + PLAYER_SIZE.x / 4,
             .y = player->position.y,
         };
         player->bullet.timing = (Accumulator){
@@ -517,7 +509,11 @@ int main(void)
                     if (accumulator_tick(&enemy->shooting, GetFrameTime(), When_Tick_Ends_Restart))
                     {
                         Bullet bullet = {
-                            .position = {.x = enemy->position.x, .y = enemy->position.y},
+                            .position =
+                                {
+                                    .x = enemy->position.x + ENEMY_SIZE.x / 4,
+                                    .y = enemy->position.y + ENEMY_SIZE.y,
+                                },
                             .timing =
                                 {
                                     .ms_accumulated = 0,
@@ -650,8 +646,7 @@ int main(void)
                            (Rectangle){0, 0, (float)target.texture.width, (float)-target.texture.height}, Vector2Zero(),
                            RED);
 
-            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A) ||
-                IsKeyDown(KEY_UP) || IsKeyDown(KEY_W) || IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S))
+            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
             {
                 state.status = PLAYING;
                 setup(&state);
