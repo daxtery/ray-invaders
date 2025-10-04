@@ -243,13 +243,13 @@ static void setup(State *state)
         }
     }
 
-    for (size_t i = 0; i < 12; ++i)
+    for (size_t i = 0; i < 3; ++i)
     {
-        int y = ENEMY_ROWS + GetRandomValue(1, EMPTY_ROWS - 1);
-        int x = GetRandomValue(0, COLUMNS);
+        int y = ENEMY_ROWS + 2;
+        int x = (i + 1) * 2;
 
-        int x_pieces = GetRandomValue(0, 10);
-        int y_pieces = GetRandomValue(0, 10);
+        int x_pieces = 15;
+        int y_pieces = 5;
 
         for (int offset_x = -(x_pieces / 2); offset_x <= (x_pieces / 2); ++offset_x)
         {
@@ -585,6 +585,21 @@ int main(void)
                     }
                 }
                 move_player_bullet(&state);
+            }
+            if (state.status == WAITING)
+            {
+                const char *text = nob_temp_sprintf("Move with A/D\nor Left/Right arrows\nto start");
+                const size_t font_size = 50;
+                Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
+                Vector2 position = {
+                    .x = GetScreenWidth() / 2,
+                    .y = GetScreenHeight() / 2,
+                };
+                DrawText(text,
+                         position.x - text_size.x / 2, //
+                         position.y - text_size.y / 2, //
+                         font_size,                    //
+                         BLACK);
             }
             break;
         }
