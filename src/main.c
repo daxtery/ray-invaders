@@ -8,6 +8,32 @@
 
 typedef struct
 {
+    uint8_t x;
+    uint8_t y;
+} AtlasPiece;
+
+typedef struct
+{
+    uint8_t width;
+    uint8_t height;
+    AtlasPiece pieces[];
+} AtlasDefinition;
+
+AtlasDefinition frames = {
+    .width = 107,
+    .height = 70,
+    .pieces = {{
+                   .x = 0,
+                   .y = 0,
+               },
+               {
+                   .x = 1,
+                   .y = 0,
+               }},
+};
+
+typedef struct
+{
     Vector2 position;
     Accumulator shooting;
     bool destroyed;
@@ -322,6 +348,8 @@ int main(void)
 
     srand(time(NULL));
 
+    Texture2D texture = LoadTexture("resources/spaceinvaderspritesheet.png");
+
     float lastHeight = 0;
     float lastWidth = 0;
 
@@ -395,7 +423,23 @@ int main(void)
 
                     Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
                     Vector2 size = Vector2Scale(ENEMY_SIZE, scale);
-                    DrawRectangleV(position, size, DARKGRAY);
+
+                    Rectangle destination_rec = {
+                        .width = size.x,
+                        .height = size.y,
+                        .x = position.x,
+                        .y = position.y,
+                    };
+
+                    // 361, 685
+
+                    AtlasPiece piece = frames.pieces[0];
+                    Rectangle source_rec = {.x = piece.x * frames.width + 361,
+                                            .y = piece.y * frames.height + 685,
+                                            .height = frames.height,
+                                            .width = frames.width};
+
+                    DrawTexturePro(texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
                 }
             }
 
