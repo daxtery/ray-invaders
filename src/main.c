@@ -315,7 +315,7 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *p
     }
 }
 
-static bool MovePlayer(Vector2 *position)
+static bool move_player(Vector2 *position)
 {
     Vector2 next_direction = {0};
 
@@ -343,7 +343,7 @@ static bool MovePlayer(Vector2 *position)
     return next_direction.x != 0.0;
 }
 
-static void HandlePlayerShooting(Player *player)
+static void handle_player_shooting(Player *player)
 {
     if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player->shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
         player->bullet.destroyed)
@@ -358,6 +358,77 @@ static void HandlePlayerShooting(Player *player)
             .ms_to_trigger = 200,
         };
         player->bullet.destroyed = false;
+    }
+}
+
+static void draw_sprite(const Animator *animator, float scale, const Vector2 offset, const Vector2 padding,
+                        Vector2 world_position, const Vector2 world_size)
+{
+    Vector2 position = world_to_screen(world_position, scale, offset, padding);
+    Vector2 size = Vector2Scale(world_size, scale);
+
+    Rectangle destination_rec = {
+        .width = size.x,
+        .height = size.y,
+        .x = position.x,
+        .y = position.y,
+    };
+
+    AtlasPiece piece = animator->atlas_definition->pieces[animator->current_frame];
+    Rectangle source_rec = {.x = piece.x * animator->atlas_definition->width,
+                            .y = piece.y * animator->atlas_definition->height,
+                            .height = animator->atlas_definition->height,
+                            .width = animator->atlas_definition->width};
+
+    DrawTexturePro(*animator->texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
+}
+
+static void draw_game(const State *state, float scale, const Vector2 offset, const Vector2 padding)
+{
+    {
+        nob_da_foreach(Enemy, enemy, &state->enemies)
+        {
+            if (enemy->destroyed)
+            {
+                continue;
+            }
+
+            draw_sprite(&enemy->animator, scale, offset, padding, enemy->position, ENEMY_SIZE);
+        }
+    }
+
+    {
+        nob_da_foreach(Bullet, bullet, &state->enemy_bullets)
+        {
+            Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
+            Vector2 size = Vector2Scale(BULLET_SIZE, scale);
+            DrawRectangleV(position, size, RED);
+        }
+    }
+
+    {
+        nob_da_foreach(Destroyable, destroyable, &state->destroyables)
+        {
+            if (destroyable->destroyed)
+            {
+                continue;
+            }
+
+            Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
+            Vector2 size = Vector2Scale(DESTROYABLE_SIZE, scale);
+            DrawRectangleV(position, size, GREEN);
+        }
+    }
+
+    {
+        draw_sprite(&state->player.animator, scale, offset, padding, state->player.position, PLAYER_SIZE);
+    }
+
+    if (!state->player.bullet.destroyed)
+    {
+        Vector2 position = world_to_screen(state->player.bullet.position, scale, offset, padding);
+        Vector2 size = Vector2Scale(BULLET_SIZE, scale);
+        DrawRectangleV(position, size, BLUE);
     }
 }
 
@@ -457,6 +528,7 @@ int main(void)
                          font_size,                    //
                          RED);
             }
+            if (state.status == PLAYING)
             {
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
@@ -465,83 +537,23 @@ int main(void)
                         continue;
                     }
 
-                    Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(ENEMY_SIZE, scale);
-
-                    Rectangle destination_rec = {
-                        .width = size.x,
-                        .height = size.y,
-                        .x = position.x,
-                        .y = position.y,
-                    };
-
                     if (accumulator_tick(&enemy->animator.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
                     {
                         enemy->animator.current_frame =
                             (enemy->animator.current_frame + 1) % enemy->animator.atlas_definition->pieces_count;
                     }
-
-                    AtlasPiece piece = enemy->animator.atlas_definition->pieces[enemy->animator.current_frame];
-                    Rectangle source_rec = {.x = piece.x * enemy_frames.width,
-                                            .y = piece.y * enemy_frames.height,
-                                            .height = enemy_frames.height,
-                                            .width = enemy_frames.width};
-
-                    DrawTexturePro(*enemy->animator.texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
                 }
-            }
 
-            {
-                nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
+                if (accumulator_tick(&state.player.animator.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
                 {
-                    Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-                    DrawRectangleV(position, size, RED);
+                    state.player.animator.current_frame = (state.player.animator.current_frame + 1) %
+                                                          state.player.animator.atlas_definition->pieces_count;
                 }
             }
 
-            {
-                nob_da_foreach(Destroyable, destroyable, &state.destroyables)
-                {
-                    if (destroyable->destroyed)
-                    {
-                        continue;
-                    }
+            draw_game(&state, scale, offset, padding);
 
-                    Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(DESTROYABLE_SIZE, scale);
-                    DrawRectangleV(position, size, GREEN);
-                }
-            }
-
-            {
-                Vector2 position = world_to_screen(state.player.position, scale, offset, padding);
-                Vector2 size = Vector2Scale(PLAYER_SIZE, scale);
-
-                Rectangle destination_rec = {
-                    .width = size.x,
-                    .height = size.y,
-                    .x = position.x,
-                    .y = position.y,
-                };
-
-                AtlasPiece piece = state.player.animator.atlas_definition->pieces[state.player.animator.current_frame];
-                Rectangle source_rec = {.x = piece.x * player_frames.width,
-                                        .y = piece.y * player_frames.height,
-                                        .height = player_frames.height,
-                                        .width = player_frames.width};
-
-                DrawTexturePro(*state.player.animator.texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
-            }
-
-            if (!state.player.bullet.destroyed)
-            {
-                Vector2 position = world_to_screen(state.player.bullet.position, scale, offset, padding);
-                Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-                DrawRectangleV(position, size, BLUE);
-            }
-
-            bool moved = MovePlayer(&state.player.position);
+            bool moved = move_player(&state.player.position);
             if (moved && state.status == WAITING)
             {
                 state.status = PLAYING;
@@ -552,7 +564,7 @@ int main(void)
 
             if (state.status == PLAYING)
             {
-                HandlePlayerShooting(&state.player);
+                handle_player_shooting(&state.player);
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
@@ -712,55 +724,8 @@ int main(void)
         case WON:
         case LOST: {
             BeginTextureMode(target);
-            {
-                nob_da_foreach(Enemy, enemy, &state.enemies)
-                {
-                    if (enemy->destroyed)
-                    {
-                        continue;
-                    }
 
-                    Vector2 position = world_to_screen(enemy->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(ENEMY_SIZE, scale);
-                    DrawRectangleV(position, size, DARKGRAY);
-                }
-            }
-
-            {
-                nob_da_foreach(Bullet, bullet, &state.enemy_bullets)
-                {
-                    Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-                    DrawRectangleV(position, size, RED);
-                }
-            }
-
-            {
-                nob_da_foreach(Destroyable, destroyable, &state.destroyables)
-                {
-                    if (destroyable->destroyed)
-                    {
-                        continue;
-                    }
-
-                    Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
-                    Vector2 size = Vector2Scale(DESTROYABLE_SIZE, scale);
-                    DrawRectangleV(position, size, GREEN);
-                }
-            }
-
-            {
-                Vector2 position = world_to_screen(state.player.position, scale, offset, padding);
-                Vector2 size = Vector2Scale(PLAYER_SIZE, scale);
-                DrawRectangleV(position, size, BLUE);
-            }
-
-            if (!state.player.bullet.destroyed)
-            {
-                Vector2 position = world_to_screen(state.player.bullet.position, scale, offset, padding);
-                Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-                DrawRectangleV(position, size, BLUE);
-            }
+            draw_game(&state, scale, offset, padding);
 
             EndTextureMode();
             DrawTextureRec(target.texture,
