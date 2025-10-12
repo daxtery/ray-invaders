@@ -14,6 +14,8 @@ typedef struct
 
 typedef struct
 {
+    uint8_t offset_width;
+    uint8_t offset_height;
     uint8_t width;
     uint8_t height;
     uint8_t pieces_count;
@@ -33,7 +35,7 @@ typedef struct
     Vector2 position;
     Accumulator shooting;
     Animator animator;
-    bool destroyed;
+    uint8_t health;
 } Enemy;
 
 typedef struct
@@ -59,8 +61,9 @@ typedef struct
 
 typedef struct
 {
+    Animator animator;
     Vector2 position;
-    bool destroyed;
+    uint8_t health;
 } Destroyable;
 
 typedef struct
@@ -76,7 +79,7 @@ typedef struct
     Accumulator shooting;
     Animator animator;
     Bullet bullet;
-    bool destroyed;
+    uint8_t health;
 } Player;
 
 typedef enum
@@ -114,8 +117,8 @@ static const Vector2 BULLET_SIZE = {
 };
 
 static const Vector2 DESTROYABLE_SIZE = {
-    .x = .1,
-    .y = .1,
+    .x = 1.5,
+    .y = .5,
 };
 
 static const Vector2 PLAYER_SIZE = {
@@ -150,6 +153,13 @@ typedef enum
     ENEMY = 3,
 } HitResult;
 
+#define BULLET_DAMAGE 5
+
+#define DESTROYABLE_FULL_HEALTH (4 * BULLET_DAMAGE)
+#define DESTROYABLE_SECOND_HEALTH (3 * BULLET_DAMAGE)
+#define DESTROYABLE_THIRD_HEALTH (2 * BULLET_DAMAGE)
+#define DESTROYABLE_FOURTH_HEALTH (1 * BULLET_DAMAGE)
+
 #define check_collisions(Type, it, da, Size, Checking, label)                                                          \
     nob_da_foreach(Type, it, da)                                                                                       \
     {                                                                                                                  \
@@ -160,7 +170,7 @@ typedef enum
             .y = bullet->position.y,                                                                                   \
         };                                                                                                             \
                                                                                                                        \
-        if (it->destroyed)                                                                                             \
+        if (it->health <= 0)                                                                                           \
         {                                                                                                              \
             continue;                                                                                                  \
         }                                                                                                              \
@@ -174,7 +184,7 @@ typedef enum
                                                                                                                        \
         if (CheckCollisionRecs(__collision_box, __bullet_collision_box))                                               \
         {                                                                                                              \
-            it->destroyed = true;                                                                                      \
+            it->health -= BULLET_DAMAGE;                                                                               \
             bullet->destroyed = true;                                                                                  \
             result = Checking;                                                                                         \
             goto label;                                                                                                \
@@ -185,7 +195,7 @@ static bool all_enemies_defeated(const State *state)
 {
     nob_da_foreach(Enemy, enemy, &state->enemies)
     {
-        if (enemy->destroyed)
+        if (enemy->health > 0)
         {
             return false;
         }
@@ -201,6 +211,10 @@ static void move_player_bullet(State *state)
     if (bullet->position.y <= 0)
     {
         bullet->destroyed = true;
+    }
+
+    if (bullet->destroyed)
+    {
         return;
     }
 
@@ -209,7 +223,7 @@ static void move_player_bullet(State *state)
     check_collisions(Enemy, enemy, &state->enemies, ENEMY_SIZE, ENEMY, move_player_bullet_after_collision);
     check_collisions(Destroyable, destroyable, &state->destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                      move_player_bullet_after_collision);
-
+    goto no_hit;
 move_player_bullet_after_collision:
     if (result == ENEMY)
     {
@@ -219,10 +233,11 @@ move_player_bullet_after_collision:
             state->status = WON;
         }
     }
+no_hit:
 }
 
 static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *player_atlas,
-                  Texture2D *sprite_sheet_texture)
+                  AtlasDefinition *destroyable_atlas, Texture2D *sprite_sheet_texture)
 {
     state->enemy_bullets.count = 0;
     state->enemies.count = 0;
@@ -257,7 +272,7 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *p
                 .timing = {0},
                 .destroyed = true,
             },
-        .destroyed = false,
+        .health = BULLET_DAMAGE,
     };
 
     state->score = 0;
@@ -284,7 +299,7 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *p
                                 .ms_to_trigger = 200,
                             },
                     },
-                .destroyed = false,
+                .health = BULLET_DAMAGE,
             };
             nob_da_append(&state->enemies, enemy);
         }
@@ -294,24 +309,21 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *p
     {
         int y = ENEMY_ROWS + 2;
         int x = (i + 1) * 2;
-
-        int x_pieces = 15;
-        int y_pieces = 5;
-
-        for (int offset_x = -(x_pieces / 2); offset_x <= (x_pieces / 2); ++offset_x)
-        {
-            for (int offset_y = -(y_pieces / 2); offset_y <= (y_pieces / 2); ++offset_y)
-            {
-                nob_da_append(&state->destroyables, ((Destroyable){
-                                                        .destroyed = false,
-                                                        .position =
-                                                            {
-                                                                .x = x + offset_x * 0.1,
-                                                                .y = y + offset_y * 0.1,
-                                                            },
-                                                    }));
-            }
-        }
+        nob_da_append(&state->destroyables, ((Destroyable){
+                                                .health = DESTROYABLE_FULL_HEALTH,
+                                                .animator =
+                                                    {
+                                                        .accumulator = {.ms_accumulated = 0, .ms_to_trigger = 0},
+                                                        .atlas_definition = destroyable_atlas,
+                                                        .texture = sprite_sheet_texture,
+                                                        .current_frame = 0,
+                                                    },
+                                                .position =
+                                                    {
+                                                        .x = x,
+                                                        .y = y,
+                                                    },
+                                            }));
     }
 }
 
@@ -375,8 +387,9 @@ static void draw_sprite(const Animator *animator, float scale, const Vector2 off
     };
 
     AtlasPiece piece = animator->atlas_definition->pieces[animator->current_frame];
-    Rectangle source_rec = {.x = piece.x * animator->atlas_definition->width,
-                            .y = piece.y * animator->atlas_definition->height,
+    Rectangle source_rec = {.x = piece.x * animator->atlas_definition->width + animator->atlas_definition->offset_width,
+                            .y = piece.y * animator->atlas_definition->height +
+                                 animator->atlas_definition->offset_height,
                             .height = animator->atlas_definition->height,
                             .width = animator->atlas_definition->width};
 
@@ -388,7 +401,7 @@ static void draw_game(const State *state, float scale, const Vector2 offset, con
     {
         nob_da_foreach(Enemy, enemy, &state->enemies)
         {
-            if (enemy->destroyed)
+            if (enemy->health <= 0)
             {
                 continue;
             }
@@ -409,26 +422,41 @@ static void draw_game(const State *state, float scale, const Vector2 offset, con
     {
         nob_da_foreach(Destroyable, destroyable, &state->destroyables)
         {
-            if (destroyable->destroyed)
+            if (destroyable->health <= 0)
             {
                 continue;
             }
 
-            Vector2 position = world_to_screen(destroyable->position, scale, offset, padding);
-            Vector2 size = Vector2Scale(DESTROYABLE_SIZE, scale);
-            DrawRectangleV(position, size, GREEN);
+            switch (destroyable->health)
+            {
+            case DESTROYABLE_FULL_HEALTH:
+                destroyable->animator.current_frame = 0;
+                break;
+            case DESTROYABLE_SECOND_HEALTH:
+                destroyable->animator.current_frame = 1;
+                break;
+            case DESTROYABLE_THIRD_HEALTH:
+                destroyable->animator.current_frame = 2;
+                break;
+            case DESTROYABLE_FOURTH_HEALTH:
+                destroyable->animator.current_frame = 3;
+                break;
+            default:
+                NOB_UNREACHABLE("Destroyable health was unexpected!\n");
+            }
+            draw_sprite(&destroyable->animator, scale, offset, padding, destroyable->position, DESTROYABLE_SIZE);
         }
-    }
 
-    {
-        draw_sprite(&state->player.animator, scale, offset, padding, state->player.position, PLAYER_SIZE);
-    }
+        {
+            draw_sprite(&state->player.animator, scale, offset, padding, state->player.position, PLAYER_SIZE);
+        }
 
-    if (!state->player.bullet.destroyed)
-    {
-        Vector2 position = world_to_screen(state->player.bullet.position, scale, offset, padding);
-        Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-        DrawRectangleV(position, size, BLUE);
+        if (!state->player.bullet.destroyed)
+        {
+            Vector2 position = world_to_screen(state->player.bullet.position, scale, offset, padding);
+            Vector2 size = Vector2Scale(BULLET_SIZE, scale);
+            DrawRectangleV(position, size, BLUE);
+        }
     }
 }
 
@@ -445,6 +473,8 @@ int main(void)
         .width = 16,
         .height = 16,
         .pieces_count = 2,
+        .offset_height = 0,
+        .offset_width = 0,
         .pieces = {{
                        .x = 0,
                        .y = 0,
@@ -458,6 +488,8 @@ int main(void)
     static AtlasDefinition player_frames = {
         .width = 16,
         .height = 16,
+        .offset_height = 0,
+        .offset_width = 0,
         .pieces_count = 1,
         .pieces = {{
             .x = 4,
@@ -465,12 +497,36 @@ int main(void)
         }},
     };
 
+    static AtlasDefinition destroyable_frames = {
+        .width = 32,
+        .height = 16,
+        .offset_width = 16 * 3,
+        .offset_height = 16,
+        .pieces_count = 4,
+        .pieces = {{
+                       .x = 0,
+                       .y = 0,
+                   },
+                   {
+                       .x = 0,
+                       .y = 1,
+                   },
+                   {
+                       .x = 0,
+                       .y = 2,
+                   },
+                   {
+                       .x = 0,
+                       .y = 3,
+                   }},
+    };
+
     float lastHeight = 0;
     float lastWidth = 0;
 
     State state = {0};
     state.status = WAITING;
-    setup(&state, &enemy_frames, &player_frames, &sprite_sheet_texture);
+    setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
 
     RenderTexture2D target;
 
@@ -532,7 +588,7 @@ int main(void)
             {
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    if (enemy->destroyed)
+                    if (enemy->health <= 0)
                     {
                         continue;
                     }
@@ -568,7 +624,7 @@ int main(void)
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    if (enemy->destroyed)
+                    if (enemy->health <= 0)
                     {
                         continue;
                     }
@@ -592,7 +648,7 @@ int main(void)
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    if (enemy->destroyed)
+                    if (enemy->health <= 0)
                     {
                         continue;
                     }
@@ -605,7 +661,7 @@ int main(void)
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    if (enemy->destroyed)
+                    if (enemy->health <= 0)
                     {
                         continue;
                     }
@@ -619,7 +675,7 @@ int main(void)
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
-                    if (enemy->destroyed)
+                    if (enemy->health <= 0)
                     {
                         continue;
                     }
@@ -735,7 +791,7 @@ int main(void)
             if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
             {
                 state.status = PLAYING;
-                setup(&state, &enemy_frames, &player_frames, &sprite_sheet_texture);
+                setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
             }
 
             const char *text = state.status == LOST
