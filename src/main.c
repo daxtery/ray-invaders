@@ -74,6 +74,7 @@ typedef struct
 {
     Vector2 position;
     Accumulator shooting;
+    Animator animator;
     Bullet bullet;
     bool destroyed;
 } Player;
@@ -220,7 +221,8 @@ move_player_bullet_after_collision:
     }
 }
 
-static void setup(State *state, AtlasDefinition *enemy_atlas, Texture2D *sprite_sheet_texture)
+static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *player_atlas,
+                  Texture2D *sprite_sheet_texture)
 {
     state->enemy_bullets.count = 0;
     state->enemies.count = 0;
@@ -237,6 +239,17 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, Texture2D *sprite_
             {
                 .ms_accumulated = 0,
                 .ms_to_trigger = 200,
+            },
+        .animator =
+            {
+                .atlas_definition = player_atlas,
+                .accumulator =
+                    {
+                        .ms_accumulated = 0,
+                        .ms_to_trigger = 200,
+                    },
+                .current_frame = 0,
+                .texture = sprite_sheet_texture,
             },
         .bullet =
             {
@@ -356,10 +369,10 @@ int main(void)
 
     srand(time(NULL));
 
-    Texture2D sprite_sheet_texture = LoadTexture("resources/spaceinvaderspritesheet.png");
+    Texture2D sprite_sheet_texture = LoadTexture("resources/SpaceInvaders.png");
     static AtlasDefinition enemy_frames = {
-        .width = 107,
-        .height = 70,
+        .width = 16,
+        .height = 16,
         .pieces_count = 2,
         .pieces = {{
                        .x = 0,
@@ -371,12 +384,22 @@ int main(void)
                    }},
     };
 
+    static AtlasDefinition player_frames = {
+        .width = 16,
+        .height = 16,
+        .pieces_count = 1,
+        .pieces = {{
+            .x = 4,
+            .y = 0,
+        }},
+    };
+
     float lastHeight = 0;
     float lastWidth = 0;
 
     State state = {0};
     state.status = WAITING;
-    setup(&state, &enemy_frames, &sprite_sheet_texture);
+    setup(&state, &enemy_frames, &player_frames, &sprite_sheet_texture);
 
     RenderTexture2D target;
 
@@ -452,8 +475,6 @@ int main(void)
                         .y = position.y,
                     };
 
-                    // 361, 685
-
                     if (accumulator_tick(&enemy->animator.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
                     {
                         enemy->animator.current_frame =
@@ -461,8 +482,8 @@ int main(void)
                     }
 
                     AtlasPiece piece = enemy->animator.atlas_definition->pieces[enemy->animator.current_frame];
-                    Rectangle source_rec = {.x = piece.x * enemy_frames.width + 361,
-                                            .y = piece.y * enemy_frames.height + 685,
+                    Rectangle source_rec = {.x = piece.x * enemy_frames.width,
+                                            .y = piece.y * enemy_frames.height,
                                             .height = enemy_frames.height,
                                             .width = enemy_frames.width};
 
@@ -496,7 +517,21 @@ int main(void)
             {
                 Vector2 position = world_to_screen(state.player.position, scale, offset, padding);
                 Vector2 size = Vector2Scale(PLAYER_SIZE, scale);
-                DrawRectangleV(position, size, BLUE);
+
+                Rectangle destination_rec = {
+                    .width = size.x,
+                    .height = size.y,
+                    .x = position.x,
+                    .y = position.y,
+                };
+
+                AtlasPiece piece = state.player.animator.atlas_definition->pieces[state.player.animator.current_frame];
+                Rectangle source_rec = {.x = piece.x * player_frames.width,
+                                        .y = piece.y * player_frames.height,
+                                        .height = player_frames.height,
+                                        .width = player_frames.width};
+
+                DrawTexturePro(*state.player.animator.texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
             }
 
             if (!state.player.bullet.destroyed)
@@ -735,7 +770,7 @@ int main(void)
             if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
             {
                 state.status = PLAYING;
-                setup(&state, &enemy_frames, &sprite_sheet_texture);
+                setup(&state, &enemy_frames, &player_frames, &sprite_sheet_texture);
             }
 
             const char *text = state.status == LOST
