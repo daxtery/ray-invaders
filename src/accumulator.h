@@ -14,3 +14,4 @@ typedef struct
 } Accumulator;
 
 bool accumulator_tick(Accumulator *, float dt, TickEndBehaviour);
+void accumulator_reset(Accumulator *);

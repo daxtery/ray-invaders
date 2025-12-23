@@ -89,6 +89,7 @@ typedef enum
     PLAYING,
     WON,
 } Status;
+
 typedef struct
 {
     Bullets enemy_bullets;
@@ -131,16 +132,10 @@ static const Vector2 ENEMY_SIZE = {
     .y = 1,
 };
 
-static Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset,
-                               const Vector2 padding)
+static Vector2 world_to_screen(const Vector2 world_coordinates, float scale, const Vector2 offset)
 {
     Vector2 position = Vector2Scale(world_coordinates, scale);
     position = Vector2Add(position, offset);
-    Vector2 scaled_padding = {
-        .x = padding.x * world_coordinates.x,
-        .y = padding.y * world_coordinates.y,
-    };
-    position = Vector2Add(position, scaled_padding);
     return position;
 }
 
@@ -151,6 +146,12 @@ typedef enum
     DESTROYABLE,
     PLAYER = 3,
     ENEMY = 3,
+} EntityType;
+
+typedef struct
+{
+    EntityType entity_type;
+    const void *entity;
 } HitResult;
 
 #define BULLET_DAMAGE 5
@@ -186,7 +187,10 @@ typedef enum
         {                                                                                                              \
             it->health -= BULLET_DAMAGE;                                                                               \
             bullet->destroyed = true;                                                                                  \
-            result = Checking;                                                                                         \
+            result = (HitResult){                                                                                      \
+                .entity = it,                                                                                          \
+                .entity_type = Checking,                                                                               \
+            };                                                                                                         \
             goto label;                                                                                                \
         }                                                                                                              \
     }
@@ -218,14 +222,14 @@ static void move_player_bullet(State *state)
         return;
     }
 
-    HitResult result = NONE;
+    HitResult result = {0};
 
     check_collisions(Enemy, enemy, &state->enemies, ENEMY_SIZE, ENEMY, move_player_bullet_after_collision);
     check_collisions(Destroyable, destroyable, &state->destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                      move_player_bullet_after_collision);
     goto no_hit;
 move_player_bullet_after_collision:
-    if (result == ENEMY)
+    if (result.entity_type == ENEMY)
     {
         state->score += 10;
         if (all_enemies_defeated(state))
@@ -362,7 +366,7 @@ static void handle_player_shooting(Player *player)
     {
         player->shooting.ms_accumulated = 0;
         player->bullet.position = (Vector2){
-            .x = player->position.x + PLAYER_SIZE.x / 4,
+            .x = player->position.x + PLAYER_SIZE.x / 2,
             .y = player->position.y,
         };
         player->bullet.timing = (Accumulator){
@@ -373,10 +377,10 @@ static void handle_player_shooting(Player *player)
     }
 }
 
-static void draw_sprite(const Animator *animator, float scale, const Vector2 offset, const Vector2 padding,
-                        Vector2 world_position, const Vector2 world_size)
+static void draw_sprite(const Animator *animator, float scale, const Vector2 offset, Vector2 world_position,
+                        const Vector2 world_size)
 {
-    Vector2 position = world_to_screen(world_position, scale, offset, padding);
+    Vector2 position = world_to_screen(world_position, scale, offset);
     Vector2 size = Vector2Scale(world_size, scale);
 
     Rectangle destination_rec = {
@@ -396,7 +400,7 @@ static void draw_sprite(const Animator *animator, float scale, const Vector2 off
     DrawTexturePro(*animator->texture, source_rec, destination_rec, Vector2Zero(), 0.0f, WHITE);
 }
 
-static void draw_game(const State *state, float scale, const Vector2 offset, const Vector2 padding)
+static void draw_game(const State *state, float scale, const Vector2 offset)
 {
     {
         nob_da_foreach(Enemy, enemy, &state->enemies)
@@ -406,14 +410,14 @@ static void draw_game(const State *state, float scale, const Vector2 offset, con
                 continue;
             }
 
-            draw_sprite(&enemy->animator, scale, offset, padding, enemy->position, ENEMY_SIZE);
+            draw_sprite(&enemy->animator, scale, offset, enemy->position, ENEMY_SIZE);
         }
     }
 
     {
         nob_da_foreach(Bullet, bullet, &state->enemy_bullets)
         {
-            Vector2 position = world_to_screen(bullet->position, scale, offset, padding);
+            Vector2 position = world_to_screen(bullet->position, scale, offset);
             Vector2 size = Vector2Scale(BULLET_SIZE, scale);
             DrawRectangleV(position, size, RED);
         }
@@ -444,16 +448,16 @@ static void draw_game(const State *state, float scale, const Vector2 offset, con
             default:
                 NOB_UNREACHABLE("Destroyable health was unexpected!\n");
             }
-            draw_sprite(&destroyable->animator, scale, offset, padding, destroyable->position, DESTROYABLE_SIZE);
+            draw_sprite(&destroyable->animator, scale, offset, destroyable->position, DESTROYABLE_SIZE);
         }
 
         {
-            draw_sprite(&state->player.animator, scale, offset, padding, state->player.position, PLAYER_SIZE);
+            draw_sprite(&state->player.animator, scale, offset, state->player.position, PLAYER_SIZE);
         }
 
         if (!state->player.bullet.destroyed)
         {
-            Vector2 position = world_to_screen(state->player.bullet.position, scale, offset, padding);
+            Vector2 position = world_to_screen(state->player.bullet.position, scale, offset);
             Vector2 size = Vector2Scale(BULLET_SIZE, scale);
             DrawRectangleV(position, size, BLUE);
         }
@@ -469,6 +473,8 @@ int main(void)
     srand(time(NULL));
 
     Texture2D sprite_sheet_texture = LoadTexture("resources/SpaceInvaders.png");
+    Texture2D background_texture = LoadTexture("resources/background.jpg");
+
     static AtlasDefinition enemy_frames = {
         .width = 16,
         .height = 16,
@@ -530,33 +536,76 @@ int main(void)
 
     RenderTexture2D target;
 
+    float background_x = 0.f;
+    bool background_x_dir = false;
+
+    float background_y = 0.f;
+    bool background_y_dir = false;
+
+    Accumulator time_to_accept_input = {
+        .ms_accumulated = 0,
+        .ms_to_trigger = 1000,
+    };
+
     while (!WindowShouldClose())
     {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
+        background_x += (background_x_dir ? -1.f : 1.f) * GetFrameTime();
+        background_y += (background_y_dir ? -1.f : 1.f) * GetFrameTime();
+
+        if (background_x > 2.f)
+        {
+            background_x_dir = true;
+        }
+        else if (background_x < -2.f)
+        {
+            background_x_dir = false;
+        }
+
+        if (background_y > 2.f)
+        {
+            background_y_dir = true;
+        }
+        else if (background_y < -2.f)
+        {
+            background_y_dir = false;
+        }
+
+        DrawTexturePro(background_texture,
+                       (Rectangle){
+                           .height = background_texture.height,
+                           .width = background_texture.width,
+                           .x = background_x,
+                           .y = background_y,
+                       },
+                       (Rectangle){
+                           .height = GetScreenHeight(),
+                           .width = GetScreenWidth(),
+                           .x = 0.f,
+                           .y = 0.f,
+                       },
+                       Vector2Zero(), 0.f, WHITE);
+
         float width = GetScreenWidth();
-        float offset_width = width * 0.1;
+        float offset_width = width * 0.05f;
         float width_for_game = width - offset_width;
-        float padding_x = width_for_game * 0.05;
-        float size_x = (width_for_game - (padding_x * COLUMNS)) / (float)(COLUMNS + 1);
+        float size_x = width_for_game / COLUMNS;
 
         float height = GetScreenHeight();
-        float offset_height = height * 0.1f;
+        float offset_height = height * 0.05f;
         float height_for_game = height - offset_height;
-        float padding_y = height_for_game * 0.05;
-        float size_y = (height_for_game - (padding_y * GAME_ROWS)) / (float)GAME_ROWS;
+        float size_y = (height_for_game) / (float)GAME_ROWS;
 
         float scale = min(size_y, size_x);
 
-        Vector2 offset = {
-            .x = (width - (size_x * (COLUMNS)) - (padding_x * COLUMNS)),
-            .y = offset_height,
-        };
+        float width_left = width - offset_width / 2;
+        float actual_width_used = scale * COLUMNS;
 
-        Vector2 padding = {
-            .x = padding_x,
-            .y = padding_y,
+        Vector2 offset = {
+            .x = offset_width / 2 + (width_left / 2 - actual_width_used / 2),
+            .y = offset_height,
         };
 
         if (fabsf(height - lastHeight) > 0.001 || fabsf(width - lastWidth) > 0.001)
@@ -572,17 +621,17 @@ int main(void)
         case PLAYING: {
             {
                 const char *text = nob_temp_sprintf("Score: %d", state.score);
-                const size_t font_size = 10;
+                const size_t font_size = 25;
                 Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
                 Vector2 position = {
                     .x = GetScreenWidth() / 2,
-                    .y = 10,
+                    .y = 20,
                 };
                 DrawText(text,
                          position.x - text_size.x / 2, //
                          position.y - text_size.y / 2, //
                          font_size,                    //
-                         RED);
+                         WHITE);
             }
             if (state.status == PLAYING)
             {
@@ -607,7 +656,7 @@ int main(void)
                 }
             }
 
-            draw_game(&state, scale, offset, padding);
+            draw_game(&state, scale, offset);
 
             bool moved = move_player(&state.player.position);
             if (moved && state.status == WAITING)
@@ -685,7 +734,7 @@ int main(void)
                         Bullet bullet = {
                             .position =
                                 {
-                                    .x = enemy->position.x + ENEMY_SIZE.x / 4,
+                                    .x = enemy->position.x + ENEMY_SIZE.x / 2,
                                     .y = enemy->position.y + ENEMY_SIZE.y,
                                 },
                             .timing =
@@ -728,7 +777,7 @@ int main(void)
                             continue;
                         }
 
-                        HitResult result = NONE;
+                        HitResult result = {0};
                         check_collisions(Destroyable, destroyable, &state.destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                                          main_loop_on_collision);
                         const struct
@@ -740,7 +789,7 @@ int main(void)
                         check_collisions(Player, player, &player_, PLAYER_SIZE, PLAYER, main_loop_on_collision);
 
                     main_loop_on_collision:
-                        if (result == PLAYER)
+                        if (result.entity_type == PLAYER)
                         {
                             state.status = LOST;
                             break;
@@ -773,7 +822,7 @@ int main(void)
                          position.x - text_size.x / 2, //
                          position.y - text_size.y / 2, //
                          font_size,                    //
-                         BLACK);
+                         WHITE);
             }
             break;
         }
@@ -781,17 +830,22 @@ int main(void)
         case LOST: {
             BeginTextureMode(target);
 
-            draw_game(&state, scale, offset, padding);
+            draw_game(&state, scale, offset);
 
             EndTextureMode();
             DrawTextureRec(target.texture,
                            (Rectangle){0, 0, (float)target.texture.width, (float)-target.texture.height}, Vector2Zero(),
                            RED);
 
-            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
+            if (accumulator_tick(&time_to_accept_input, GetFrameTime(), When_Tick_Ends_Keep))
             {
-                state.status = PLAYING;
-                setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
+                if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A))
+                {
+                    accumulator_reset(&time_to_accept_input);
+                    state.status = PLAYING;
+                    setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
+                    continue;
+                }
             }
 
             const char *text = state.status == LOST
@@ -808,7 +862,7 @@ int main(void)
                      position.x - text_size.x / 2, //
                      position.y - text_size.y / 2, //
                      font_size,                    //
-                     BLACK);
+                     WHITE);
         }
         break;
 

@@ -15,3 +15,8 @@ bool accumulator_tick(Accumulator *accumulator, float dt, TickEndBehaviour when_
     accumulator->ms_accumulated += add;
     return false;
 }
+
+void accumulator_reset(Accumulator *accumulator)
+{
+    accumulator->ms_accumulated = 0;
+}
