@@ -32,8 +32,25 @@ typedef struct
 
 typedef struct
 {
+    Accumulator accumulator;
+    Animator bullet_animator;
+} EnemyShooting;
+
+typedef struct
+{
+    AtlasDefinition *atlas;
+    AtlasDefinition *bullet_atlas;
+} EnemyTypeInfo;
+
+typedef struct
+{
+    EnemyTypeInfo enemy_regular, enemy_squid, enemy_skull, enemy_head, enemy_horns;
+} EnemyTypes;
+
+typedef struct
+{
     Vector2 position;
-    Accumulator shooting;
+    EnemyShooting shooting;
     Animator animator;
     uint8_t health;
 } Enemy;
@@ -47,9 +64,10 @@ typedef struct
 
 typedef struct
 {
-    bool destroyed;
-    Vector2 position;
+    Animator animator;
     Accumulator timing;
+    Vector2 position;
+    bool destroyed;
 } Bullet;
 
 typedef struct
@@ -82,6 +100,19 @@ typedef struct
     uint8_t health;
 } Player;
 
+typedef struct
+{
+    Animator animator;
+    bool finished;
+} Particle;
+
+typedef struct
+{
+    Particle *items;
+    size_t count;
+    size_t capacity;
+} Particles;
+
 typedef enum
 {
     LOST,
@@ -95,13 +126,10 @@ typedef struct
     Bullets enemy_bullets;
     Enemies enemies;
     bool enemies_going_right;
-    //
     Destroyables destroyables;
-    //
+    Particles particles;
     Player player;
-    //
     uint16_t score;
-    //
     Status status;
 } State;
 
@@ -113,8 +141,8 @@ typedef struct
 #define GAME_ROWS (ENEMY_ROWS + EMPTY_ROWS + 1)
 
 static const Vector2 BULLET_SIZE = {
-    .x = .1,
-    .y = .1,
+    .x = .3,
+    .y = .3,
 };
 
 static const Vector2 DESTROYABLE_SIZE = {
@@ -232,6 +260,7 @@ move_player_bullet_after_collision:
     if (result.entity_type == ENEMY)
     {
         state->score += 10;
+
         if (all_enemies_defeated(state))
         {
             state->status = WON;
@@ -240,7 +269,7 @@ move_player_bullet_after_collision:
 no_hit:
 }
 
-static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *player_atlas,
+static void setup(State *state, const EnemyTypes *enemy_types, AtlasDefinition *player_atlas,
                   AtlasDefinition *destroyable_atlas, Texture2D *sprite_sheet_texture)
 {
     state->enemy_bullets.count = 0;
@@ -285,17 +314,36 @@ static void setup(State *state, AtlasDefinition *enemy_atlas, AtlasDefinition *p
     {
         for (size_t j = 0; j < ENEMY_ROWS; ++j)
         {
+            EnemyTypeInfo info = (j == 0 || j == 1) ? enemy_types->enemy_squid : enemy_types->enemy_regular;
+
+            AtlasDefinition *atlas = info.atlas;
+            AtlasDefinition *bullet_atlas = info.bullet_atlas;
+
             Enemy enemy = {
                 .position = {.x = i, .y = j},
                 .shooting =
-                    {
-                        .ms_accumulated = 0,
-                        .ms_to_trigger = GetRandomValue(5000, 30000),
+                    (EnemyShooting){
+                        .accumulator =
+                            {
+                                .ms_accumulated = 0,
+                                .ms_to_trigger = GetRandomValue(5000, 30000),
+                            },
+                        .bullet_animator =
+                            {
+                                .texture = sprite_sheet_texture,
+                                .atlas_definition = bullet_atlas,
+                                .current_frame = 0,
+                                .accumulator =
+                                    {
+                                        .ms_accumulated = 0,
+                                        .ms_to_trigger = 200,
+                                    },
+                            },
                     },
                 .animator =
                     {
                         .texture = sprite_sheet_texture,
-                        .atlas_definition = enemy_atlas,
+                        .atlas_definition = atlas,
                         .current_frame = 0,
                         .accumulator =
                             {
@@ -359,7 +407,7 @@ static bool move_player(Vector2 *position)
     return next_direction.x != 0.0;
 }
 
-static void handle_player_shooting(Player *player)
+static void handle_player_shooting(Player *player, const Animator *bullet_animator)
 {
     if (IsKeyDown(KEY_SPACE) && accumulator_tick(&player->shooting, GetFrameTime(), When_Tick_Ends_Keep) &&
         player->bullet.destroyed)
@@ -373,6 +421,7 @@ static void handle_player_shooting(Player *player)
             .ms_accumulated = 0,
             .ms_to_trigger = 200,
         };
+        player->bullet.animator = *bullet_animator;
         player->bullet.destroyed = false;
     }
 }
@@ -417,9 +466,7 @@ static void draw_game(const State *state, float scale, const Vector2 offset)
     {
         nob_da_foreach(Bullet, bullet, &state->enemy_bullets)
         {
-            Vector2 position = world_to_screen(bullet->position, scale, offset);
-            Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-            DrawRectangleV(position, size, RED);
+            draw_sprite(&bullet->animator, scale, offset, bullet->position, BULLET_SIZE);
         }
     }
 
@@ -457,12 +504,158 @@ static void draw_game(const State *state, float scale, const Vector2 offset)
 
         if (!state->player.bullet.destroyed)
         {
-            Vector2 position = world_to_screen(state->player.bullet.position, scale, offset);
-            Vector2 size = Vector2Scale(BULLET_SIZE, scale);
-            DrawRectangleV(position, size, BLUE);
+            draw_sprite(&state->player.bullet.animator, scale, offset, state->player.bullet.position, BULLET_SIZE);
         }
     }
 }
+
+static AtlasDefinition squid_frames = {
+    .width = 16,
+    .height = 16,
+    .pieces_count = 2,
+    .offset_height = 0,
+    .offset_width = 0,
+    .pieces = {{
+                   .x = 0,
+                   .y = 1,
+               },
+               {
+                   .x = 1,
+                   .y = 1,
+               }},
+};
+
+static AtlasDefinition squid_bullet_frames = {
+    .width = 16,
+    .height = 16,
+    .offset_width = 0,
+    .offset_height = 0,
+    .pieces_count = 2,
+    .pieces =
+        {
+            {
+                .x = 2,
+                .y = 1,
+            },
+            {
+                .x = 5,
+                .y = 1,
+            },
+        },
+};
+
+static AtlasDefinition skull_frames = {
+    .width = 16,
+    .height = 16,
+    .pieces_count = 2,
+    .offset_height = 0,
+    .offset_width = 0,
+    .pieces = {{
+                   .x = 0,
+                   .y = 2,
+               },
+               {
+                   .x = 1,
+                   .y = 2,
+               }},
+};
+
+static AtlasDefinition skull_bullet_frames = {
+    .width = 16,
+    .height = 16,
+    .pieces_count = 1,
+    .offset_width = 0,
+    .offset_height = 0,
+    .pieces =
+        {
+            {
+                .x = 2,
+                .y = 2,
+            },
+        },
+};
+
+static AtlasDefinition regular_frames = {
+    .width = 16,
+    .height = 16,
+    .pieces_count = 2,
+    .offset_height = 0,
+    .offset_width = 0,
+    .pieces = {{
+                   .x = 0,
+                   .y = 0,
+               },
+               {
+                   .x = 1,
+                   .y = 0,
+               }},
+};
+
+static AtlasDefinition regular_bullet_frames = {
+    .width = 16,
+    .height = 16,
+    .pieces_count = 1,
+    .offset_width = 0,
+    .offset_height = 0,
+    .pieces =
+        {
+            {
+                .x = 2,
+                .y = 0,
+            },
+        },
+};
+
+static AtlasDefinition player_frames = {
+    .width = 16,
+    .height = 16,
+    .offset_height = 0,
+    .offset_width = 0,
+    .pieces_count = 1,
+    .pieces = {{
+        .x = 4,
+        .y = 0,
+    }},
+};
+
+static AtlasDefinition player_bullet_atlas = {
+    .width = 16,
+    .height = 16,
+    .offset_width = 0,
+    .offset_height = 0,
+    .pieces_count = 1,
+    .pieces =
+        {
+            {
+                .x = 2,
+                .y = 0,
+            },
+        },
+};
+
+static AtlasDefinition destroyable_frames = {
+    .width = 32,
+    .height = 16,
+    .offset_width = 16 * 3,
+    .offset_height = 16,
+    .pieces_count = 4,
+    .pieces = {{
+                   .x = 0,
+                   .y = 0,
+               },
+               {
+                   .x = 0,
+                   .y = 1,
+               },
+               {
+                   .x = 0,
+                   .y = 2,
+               },
+               {
+                   .x = 0,
+                   .y = 3,
+               }},
+};
 
 int main(void)
 {
@@ -475,56 +668,32 @@ int main(void)
     Texture2D sprite_sheet_texture = LoadTexture("resources/SpaceInvaders.png");
     Texture2D background_texture = LoadTexture("resources/background.jpg");
 
-    static AtlasDefinition enemy_frames = {
-        .width = 16,
-        .height = 16,
-        .pieces_count = 2,
-        .offset_height = 0,
-        .offset_width = 0,
-        .pieces = {{
-                       .x = 0,
-                       .y = 0,
-                   },
-                   {
-                       .x = 1,
-                       .y = 0,
-                   }},
-    };
-
-    static AtlasDefinition player_frames = {
-        .width = 16,
-        .height = 16,
-        .offset_height = 0,
-        .offset_width = 0,
-        .pieces_count = 1,
-        .pieces = {{
-            .x = 4,
-            .y = 0,
-        }},
-    };
-
-    static AtlasDefinition destroyable_frames = {
-        .width = 32,
-        .height = 16,
-        .offset_width = 16 * 3,
-        .offset_height = 16,
-        .pieces_count = 4,
-        .pieces = {{
-                       .x = 0,
-                       .y = 0,
-                   },
-                   {
-                       .x = 0,
-                       .y = 1,
-                   },
-                   {
-                       .x = 0,
-                       .y = 2,
-                   },
-                   {
-                       .x = 0,
-                       .y = 3,
-                   }},
+    EnemyTypes enemy_types = {
+        .enemy_regular =
+            {
+                .atlas = &regular_frames,
+                .bullet_atlas = &regular_bullet_frames,
+            },
+        .enemy_squid =
+            {
+                .atlas = &squid_frames,
+                .bullet_atlas = &squid_bullet_frames,
+            },
+        .enemy_skull =
+            {
+                .atlas = &skull_frames,
+                .bullet_atlas = &skull_bullet_frames,
+            },
+        .enemy_head =
+            {
+                .atlas = &regular_frames,
+                .bullet_atlas = &regular_bullet_frames,
+            },
+        .enemy_horns =
+            {
+                .atlas = &squid_frames,
+                .bullet_atlas = &squid_bullet_frames,
+            },
     };
 
     float lastHeight = 0;
@@ -532,7 +701,14 @@ int main(void)
 
     State state = {0};
     state.status = WAITING;
-    setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
+    setup(&state, &enemy_types, &player_frames, &destroyable_frames, &sprite_sheet_texture);
+
+    Animator player_bullet_animator = {
+        .accumulator = {0},
+        .atlas_definition = &player_bullet_atlas,
+        .current_frame = 0,
+        .texture = &sprite_sheet_texture,
+    };
 
     RenderTexture2D target;
 
@@ -669,7 +845,7 @@ int main(void)
 
             if (state.status == PLAYING)
             {
-                handle_player_shooting(&state.player);
+                handle_player_shooting(&state.player, &player_bullet_animator);
 
                 nob_da_foreach(Enemy, enemy, &state.enemies)
                 {
@@ -729,7 +905,7 @@ int main(void)
                         continue;
                     }
 
-                    if (accumulator_tick(&enemy->shooting, GetFrameTime(), When_Tick_Ends_Restart))
+                    if (accumulator_tick(&enemy->shooting.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
                     {
                         Bullet bullet = {
                             .position =
@@ -742,6 +918,7 @@ int main(void)
                                     .ms_accumulated = 0,
                                     .ms_to_trigger = 200,
                                 },
+                            .animator = enemy->shooting.bullet_animator,
                         };
                         nob_da_append(&state.enemy_bullets, bullet);
                     }
@@ -758,6 +935,12 @@ int main(void)
                         if (accumulator_tick(&bullet->timing, GetFrameTime(), When_Tick_Ends_Restart))
                         {
                             bullet->position = Vector2Add(bullet->position, gravity);
+                        }
+
+                        if (accumulator_tick(&bullet->animator.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
+                        {
+                            bullet->animator.current_frame =
+                                (bullet->animator.current_frame + 1) % bullet->animator.atlas_definition->pieces_count;
                         }
                     }
 
@@ -811,7 +994,8 @@ int main(void)
             }
             if (state.status == WAITING)
             {
-                const char *text = nob_temp_sprintf("Move with A/D\nor Left/Right arrows\nto start");
+                const char *text =
+                    nob_temp_sprintf("Move with A/D\nor Left/Right arrows.\n Space to shoot.\nMove to start playing.");
                 const size_t font_size = 50;
                 Vector2 text_size = MeasureTextEx(GetFontDefault(), text, font_size, 0);
                 Vector2 position = {
@@ -843,7 +1027,7 @@ int main(void)
                 {
                     accumulator_reset(&time_to_accept_input);
                     state.status = PLAYING;
-                    setup(&state, &enemy_frames, &player_frames, &destroyable_frames, &sprite_sheet_texture);
+                    setup(&state, &enemy_types, &player_frames, &destroyable_frames, &sprite_sheet_texture);
                     continue;
                 }
             }
