@@ -5,6 +5,7 @@ A simple Space Invaders game in C with Raylib
 # Build & play locally
 
 1. clone the repo
+2. get libraylib.a from https://github.com/raysan5/raylib/releases and place it under `libs/raylib-5.5_linux_amd64/lib` or your system's architecture. Change `nob.c` if required
 1. have gcc or equivalent installed
 1. `cc nob.c -o nob`
 1. `./nob && ./main`
