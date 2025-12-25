@@ -103,6 +103,7 @@ typedef struct
 typedef struct
 {
     Animator animator;
+    Vector2 position;
     bool finished;
 } Particle;
 
@@ -223,6 +224,26 @@ typedef struct
         }                                                                                                              \
     }
 
+#define nob_da_pool(Type, var, da)                                                                                     \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        bool __found = false;                                                                                          \
+        nob_da_foreach(Type, _it, (da))                                                                                \
+        {                                                                                                              \
+            if (_it->finished)                                                                                         \
+            {                                                                                                          \
+                var = _it;                                                                                             \
+                __found = true;                                                                                        \
+                break;                                                                                                 \
+            }                                                                                                          \
+        }                                                                                                              \
+        if (!__found)                                                                                                  \
+        {                                                                                                              \
+            nob_da_append((da), (Type){0});                                                                            \
+            var = &nob_da_last((da));                                                                                  \
+        }                                                                                                              \
+    } while (0)
+
 static bool all_enemies_defeated(const State *state)
 {
     nob_da_foreach(Enemy, enemy, &state->enemies)
@@ -236,7 +257,7 @@ static bool all_enemies_defeated(const State *state)
     return true;
 }
 
-static void move_player_bullet(State *state)
+static void move_player_bullet(State *state, AtlasDefinition *enemy_destroyed_atlas, Texture *enemy_destroyed_texture)
 {
     Bullet *bullet = &state->player.bullet;
 
@@ -256,10 +277,27 @@ static void move_player_bullet(State *state)
     check_collisions(Destroyable, destroyable, &state->destroyables, DESTROYABLE_SIZE, DESTROYABLE,
                      move_player_bullet_after_collision);
     goto no_hit;
+
 move_player_bullet_after_collision:
     if (result.entity_type == ENEMY)
     {
         state->score += 10;
+        Particle *particle = NULL;
+        nob_da_pool(Particle, particle, &state->particles);
+        assert(particle);
+
+        particle->finished = false;
+        particle->animator = (Animator){
+            .accumulator =
+                (Accumulator){
+                    .ms_accumulated = 0,
+                    .ms_to_trigger = 200,
+                },
+            .atlas_definition = enemy_destroyed_atlas,
+            .current_frame = 0,
+            .texture = enemy_destroyed_texture,
+        };
+        particle->position = ((Enemy *)result.entity)->position;
 
         if (all_enemies_defeated(state))
         {
@@ -276,6 +314,7 @@ static void setup(State *state, const EnemyTypes *enemy_types, AtlasDefinition *
     state->enemies.count = 0;
     state->enemies_going_right = true;
     state->destroyables.count = 0;
+    state->particles.count = 0;
 
     state->player = (Player){
         .position =
@@ -471,6 +510,18 @@ static void draw_game(const State *state, float scale, const Vector2 offset)
     }
 
     {
+        nob_da_foreach(Particle, particle, &state->particles)
+        {
+            if (particle->finished)
+            {
+                continue;
+            }
+
+            draw_sprite(&particle->animator, scale, offset, particle->position, ENEMY_SIZE);
+        }
+    }
+
+    {
         nob_da_foreach(Destroyable, destroyable, &state->destroyables)
         {
             if (destroyable->health <= 0)
@@ -657,6 +708,22 @@ static AtlasDefinition destroyable_frames = {
                }},
 };
 
+static AtlasDefinition destroy_explosion_frames = {
+    .width = 16,
+    .height = 16,
+    .offset_width = 0,
+    .offset_height = 0,
+    .pieces_count = 2,
+    .pieces = {{
+                   .x = 2,
+                   .y = 3,
+               },
+               {
+                   .x = 2,
+                   .y = 4,
+               }},
+};
+
 int main(void)
 {
     InitWindow(800, 600, "Ray Invaders Game in Raylib");
@@ -832,6 +899,26 @@ int main(void)
                 }
             }
 
+            if (state.status == PLAYING)
+            {
+                nob_da_foreach(Particle, particle, &state.particles)
+                {
+                    if (particle->finished)
+                    {
+                        continue;
+                    }
+
+                    if (accumulator_tick(&particle->animator.accumulator, GetFrameTime(), When_Tick_Ends_Restart))
+                    {
+                        particle->animator.current_frame = particle->animator.current_frame + 1;
+                        if (particle->animator.current_frame >= particle->animator.atlas_definition->pieces_count)
+                        {
+                            particle->finished = true;
+                        }
+                    }
+                }
+            }
+
             draw_game(&state, scale, offset);
 
             bool moved = move_player(&state.player.position);
@@ -990,7 +1077,7 @@ int main(void)
                         }
                     }
                 }
-                move_player_bullet(&state);
+                move_player_bullet(&state, &destroy_explosion_frames, &sprite_sheet_texture);
             }
             if (state.status == WAITING)
             {
