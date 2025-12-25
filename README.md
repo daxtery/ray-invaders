@@ -1,6 +1,6 @@
 A simple Space Invaders game in C with Raylib
 
-![](docs/sample.mp4)
+![Short gif showing gameplay](https://github.com/user-attachments/assets/a660d7e2-a9a5-4394-af08-f6face9625a5)
 
 # Build & play locally
 
